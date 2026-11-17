@@ -8,6 +8,7 @@ import RaterStatusPanel from './RaterStatusPanel';
 import QuestionCard from './QuestionCard';
 import AssistancePanel from './AssistancePanel';
 import RaterIntro from './RaterIntro';
+import StudyInstructionsDialog from './StudyInstructionsDialog';
 import RaterConsent from './RaterConsent';
 import RaterDebrief from './RaterDebrief';
 import type { Session } from '../types';
@@ -153,6 +154,10 @@ function RaterView() {
   // never made to.
   const [questionOverLimit, setQuestionOverLimit] = useState(false);
   const [showIntro, setShowIntro] = useState(false);
+  // The intro's instructions, reopened on demand from the rating screen.
+  const [instructionsOpen, setInstructionsOpen] = useState(false);
+  const openInstructions = useCallback(() => setInstructionsOpen(true), []);
+  const closeInstructions = useCallback(() => setInstructionsOpen(false), []);
   // Consent comes before everything else, the intro included. Driven by
   // `session.consented_at`; the backend refuses questions until it is set.
   const [showConsent, setShowConsent] = useState(false);
@@ -719,7 +724,11 @@ function RaterView() {
       )}
       {/* One floating readout for everything the rater tracks. The count lives
           here rather than in the header so the panel never sits on top of it. */}
-      <RaterStatusPanel graceMinutes={Math.round(session.session_grace_seconds / 60)}>
+      <RaterStatusPanel
+        graceMinutes={Math.round(session.session_grace_seconds / 60)}
+        // Only studies that had an intro screen have instructions to reopen.
+        onOpenInstructions={hasIntroContent(session) ? openInstructions : undefined}
+      >
         <Timer
           sessionEndTime={session.session_end_time}
           graceSeconds={session.session_grace_seconds}
@@ -746,6 +755,17 @@ function RaterView() {
       <div style={styles.header}>
         <h2 style={styles.experimentName}>{session.experiment_name}</h2>
       </div>
+
+      {instructionsOpen && (
+        <StudyInstructionsDialog
+          experimentName={session.experiment_name}
+          descriptionHtml={session.experiment_description_html}
+          assistanceInstructions={session.assistance_instructions}
+          sessionMinutes={minutesBetween(session.session_start, session.session_end_time)}
+          graceMinutes={Math.round(session.session_grace_seconds / 60)}
+          onClose={closeInstructions}
+        />
+      )}
 
       {queue.submissionError && (
         <div role="alert" style={graceBannerStyle}>

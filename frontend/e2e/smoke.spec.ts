@@ -1346,6 +1346,79 @@ test('the rater intro states the session length before they commit', async ({ pa
   await expect(expectations).toContainText('5 more minutes');
 });
 
+test('the rating screen reopens the intro instructions in a scrollable dialog', async ({ page }) => {
+  const state = createMockState();
+  seedRaterWithQuestion(state, {
+    id: 702,
+    question_text: 'Can the instructions be reopened?',
+    options: 'Yes|No',
+    question_type: 'MC',
+    is_markdown: false,
+  });
+  state.sessionsByExperimentId[1].experiment_description_html =
+    `<h2>Guidelines</h2>${'<p>A long paragraph of study guidance for the rater.</p>'.repeat(40)}<p>Final guideline.</p>`;
+
+  await installApiMocks(page, state);
+  await page.goto(RATER_URL);
+  await agreeToConsent(page);
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByText('Can the instructions be reopened?')).toBeVisible();
+
+  // The button rides in the floating status panel; pointing at it leaves the
+  // clock help closed.
+  const opener = page.getByTestId('rater-status-panel').getByTestId('instructions-button');
+  await opener.hover();
+  await expect(page.getByTestId('rater-status-help')).toHaveCount(0);
+  await opener.click();
+  const dialog = page.getByRole('dialog', { name: state.sessionsByExperimentId[1].experiment_name });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByTestId('session-expectations')).toBeVisible();
+  await expect(dialog.getByRole('heading', { name: 'Guidelines' })).toBeVisible();
+
+  // The instructions scroll inside the dialog; the page behind stays put.
+  // They open focused, so the keyboard scrolls them straight away.
+  const body = dialog.getByTestId('study-instructions-body');
+  await expect(body).toBeFocused();
+  expect(await body.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+  await page.keyboard.press('PageDown');
+  await expect.poll(() => body.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  expect(await page.evaluate(() => document.body.style.overflow)).toBe('hidden');
+  await dialog.getByText('Final guideline.').scrollIntoViewIfNeeded();
+  const back = dialog.getByRole('button', { name: 'Back to rating' });
+  const close = dialog.getByRole('button', { name: 'Close instructions' });
+  await expect(back).toBeInViewport();
+
+  // Tab wraps around inside the dialog in both directions.
+  await back.focus();
+  await page.keyboard.press('Tab');
+  await expect(close).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(back).toBeFocused();
+
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+  expect(await page.evaluate(() => document.body.style.overflow)).toBe('');
+
+  // The close button returns focus to the opener too.
+  await opener.click();
+  await close.click();
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+
+  // A right-click on the backdrop leaves the dialog open; a left click closes it.
+  await opener.click();
+  await page.mouse.click(5, 5, { button: 'right' });
+  await expect(dialog).toBeVisible();
+  await page.mouse.click(5, 5);
+  await expect(dialog).toHaveCount(0);
+
+  await opener.click();
+  await back.click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText('Can the instructions be reopened?')).toBeVisible();
+});
+
 test('create experiment and upload CSV shows the upload and success toast', async ({ page }) => {
   const state = createMockState();
   await installApiMocks(page, state);
