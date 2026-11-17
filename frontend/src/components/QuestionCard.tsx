@@ -33,7 +33,13 @@ const QUESTION_HEADING_STYLE: CSSProperties = {
 const QUESTION_PROSE_STYLE: CSSProperties = { color: 'var(--ink)' };
 const OPTION_LABEL_PATTERN = /(?:^|\r?\n)\s*(?:\(?[A-Z]\)?[.)]|[A-Z]:)\s+/g;
 // 5-point unipolar Likert scale for self-reported confidence (index 0 -> value 1).
-const CONFIDENCE_LABELS = ['Not at all', 'Slightly', 'Moderately', 'Very', 'Completely'];
+const CONFIDENCE_LABELS = [
+  'Not at all confident',
+  'Slightly confident',
+  'Moderately confident',
+  'Very confident',
+  'Extremely confident',
+];
 
 interface QuestionCardProps {
   question: Question;
@@ -461,7 +467,9 @@ async function buildLongContextDocumentHtml(
 function QuestionCard({ question, onSubmit, disabled = false, assistanceAnswer = null, assistanceActive = false, humanPromptPrefix = null, humanPromptSuffix = null }: QuestionCardProps) {
   const [selectedAnswer, setSelectedAnswer] = useState('');
   const [freeTextAnswer, setFreeTextAnswer] = useState('');
-  const [confidence, setConfidence] = useState(3);
+  // Starts unset and is required: a preset value would be recorded as the
+  // rater's confidence even when they never looked at the scale.
+  const [confidence, setConfidence] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [documentUrl, setDocumentUrl] = useState<string | null>(null);
   const timeStartedRef = useRef(new Date().toISOString());
@@ -480,7 +488,7 @@ function QuestionCard({ question, onSubmit, disabled = false, assistanceAnswer =
   useEffect(() => {
     setSelectedAnswer('');
     setFreeTextAnswer('');
-    setConfidence(3);
+    setConfidence(null);
     setSubmitting(false);
     timeStartedRef.current = new Date().toISOString();
   }, [question.id]);
@@ -531,6 +539,7 @@ function QuestionCard({ question, onSubmit, disabled = false, assistanceAnswer =
       alert('Please provide an answer');
       return;
     }
+    if (confidence === null) return;
 
     setSubmitting(true);
     try {
@@ -540,7 +549,8 @@ function QuestionCard({ question, onSubmit, disabled = false, assistanceAnswer =
     }
   };
 
-  const canSubmit = !disabled && (isMC ? !!selectedAnswer : !!freeTextAnswer.trim());
+  const canSubmit =
+    !disabled && confidence !== null && (isMC ? !!selectedAnswer : !!freeTextAnswer.trim());
 
   const cardStyle: CSSProperties = {
     background: 'var(--surface)',
@@ -772,31 +782,41 @@ function QuestionCard({ question, onSubmit, disabled = false, assistanceAnswer =
             }}
           >
             <span
+              id={`confidence-label-${question.id}`}
               style={{
-                font: '600 var(--text-label)/1 var(--font-mono)',
-                letterSpacing: '0.16em',
-                textTransform: 'uppercase',
-                color: 'var(--muted)',
+                font: '600 var(--text-body)/1.4 var(--font-body)',
+                color: 'var(--ink)',
               }}
             >
-              Confidence
+              How confident are you that your answer is correct?
             </span>
             <span
               style={{
                 fontSize: 'var(--text-secondary)',
-                fontWeight: 600,
-                color: 'var(--accent-soft-ink)',
+                fontWeight: confidence === null ? 400 : 600,
+                color: confidence === null ? 'var(--muted)' : 'var(--accent-soft-ink)',
+                whiteSpace: 'nowrap',
+                marginLeft: 12,
               }}
             >
-              {CONFIDENCE_LABELS[confidence - 1]}
+              {confidence === null ? 'Required' : CONFIDENCE_LABELS[confidence - 1]}
             </span>
           </div>
+          {/* A range input always holds a value, so "unset" is our own state:
+              the thumb stays hidden until the rater clicks or drags. onChange
+              misses a click on the middle of the track (the value it already
+              holds), so onClick records the choice as well. */}
           <input
             type="range"
             min="1"
             max="5"
-            value={confidence}
+            aria-labelledby={`confidence-label-${question.id}`}
+            aria-required
+            aria-valuetext={confidence === null ? 'Not chosen' : CONFIDENCE_LABELS[confidence - 1]}
+            className={confidence === null ? 'confidence-unset' : undefined}
+            value={confidence ?? 3}
             onChange={(e) => setConfidence(parseInt(e.target.value))}
+            onClick={(e) => setConfidence(parseInt(e.currentTarget.value))}
             style={{
               width: '100%',
               height: 6,
@@ -810,7 +830,7 @@ function QuestionCard({ question, onSubmit, disabled = false, assistanceAnswer =
           <div
             style={{
               position: 'relative',
-              height: 16,
+              height: 32,
               marginTop: 10,
             }}
           >
@@ -820,21 +840,35 @@ function QuestionCard({ question, onSubmit, disabled = false, assistanceAnswer =
               const isLast = i === CONFIDENCE_LABELS.length - 1;
               const isActive = confidence === i + 1;
               return (
-                <span
+                <button
                   key={label}
+                  type="button"
+                  tabIndex={-1}
+                  onClick={() => setConfidence(i + 1)}
                   className={isFirst || isLast ? undefined : 'confidence-mid-label'}
                   style={{
                     position: 'absolute',
                     whiteSpace: 'nowrap',
                     left: `${pct}%`,
                     transform: isFirst ? 'none' : isLast ? 'translateX(-100%)' : 'translateX(-50%)',
+                    padding: 0,
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontFamily: 'var(--font-body)',
                     fontWeight: isActive ? 700 : 500,
                     color: isActive ? 'var(--accent-soft-ink)' : 'var(--muted)',
                     fontSize: 'var(--text-label)',
+                    lineHeight: 1.3,
+                    textAlign: isFirst ? 'left' : isLast ? 'right' : 'center',
                   }}
+                  aria-label={label}
                 >
-                  {label}
-                </span>
+                  {/* Two lines, so five full labels fit under the track. */}
+                  {label.replace(' confident', '')}
+                  <br />
+                  confident
+                </button>
               );
             })}
           </div>

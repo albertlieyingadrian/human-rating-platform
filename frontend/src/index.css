@@ -732,6 +732,13 @@ button:disabled {
     display: none;
   }
 }
+/* The confidence slider shows no thumb until the rater has chosen a value. */
+input[type="range"].confidence-unset::-webkit-slider-thumb {
+  opacity: 0;
+}
+input[type="range"].confidence-unset::-moz-range-thumb {
+  opacity: 0;
+}
 
 /* The intro sets the gap below the description on its container. */
 .rater-intro-description > :last-child {
