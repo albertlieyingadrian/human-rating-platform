@@ -28,10 +28,11 @@ frontend/vite.log
 data/
 artifacts/
 
-# Local assistant/worktree artifacts, except shared Claude Code config
+# Local assistant/worktree artifacts, except shared Claude Code config.
+# .claude/skills is a symlink to .agents/skills, the copy every agent reads.
 .claude/*
 !.claude/settings.json
-!.claude/skills/
+!.claude/skills
 
 # Local credentials (service-account keys etc.); never committed
 backend/secrets/
