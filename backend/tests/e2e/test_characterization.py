@@ -5421,6 +5421,37 @@ def test_end_session_releases_reserved_slot(client: TestClient):
     assert rejected.status_code == 403
 
 
+def test_feedback_is_saved_after_the_session_ends_and_shown_in_analytics(client: TestClient):
+    experiment = _create_experiment_with_target(client, target=1)
+    _upload_questions(client, experiment["id"])
+    session = _start_session(client, experiment["id"], prolific_pid="PID_FEEDBACK")
+    _submit(client, session, _get_next_question(client, session))
+    headers = _rater_headers(session)
+    assert client.post("/api/raters/end-session", headers=headers).status_code == 200
+
+    def stored_feedback() -> str | None:
+        analytics = client.get(f"/api/admin/experiments/{experiment['id']}/analytics").json()
+        return analytics["raters"][0]["feedback"]
+
+    assert stored_feedback() is None
+
+    # The screen comes after the last question, so an ended session must
+    # still be able to post.
+    saved = client.post(
+        "/api/raters/feedback", headers=headers, json={"feedback": "  Question 2 was unclear.\n"}
+    )
+    assert saved.status_code == 200, saved.text
+    assert stored_feedback() == "Question 2 was unclear."
+
+    export = client.get(f"/api/admin/experiments/{experiment['id']}/export")
+    rows = list(csv.DictReader(io.StringIO(export.text)))
+    assert [row["rater_feedback"] for row in rows] == ["Question 2 was unclear."]
+
+    too_long = client.post("/api/raters/feedback", headers=headers, json={"feedback": "x" * 5001})
+    assert too_long.status_code == 422
+    assert client.post("/api/raters/feedback", json={"feedback": "no session"}).status_code == 422
+
+
 def _start_preview_session(client: TestClient, experiment_id: int, prolific_pid: str) -> dict:
     response = client.post(
         "/api/raters/start",

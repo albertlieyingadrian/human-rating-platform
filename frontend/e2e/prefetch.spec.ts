@@ -302,7 +302,8 @@ test('session expiry cancels scheduled assistance retries', async ({ page }) => 
   await page.goto(url);
   await expect.poll(() => state.starts.length).toBe(1);
   await page.clock.runFor(1500);
-  await expect(page.getByText('Your session has ended.')).toBeVisible();
+  // An ended session lands on the optional feedback screen first.
+  await expect(page.getByTestId('feedback-screen')).toBeVisible();
   const requestsAtExpiry = state.starts.length;
   await page.clock.runFor(30000);
   expect(state.starts).toHaveLength(requestsAtExpiry);

@@ -129,6 +129,7 @@ const routes = {
     submit: '/raters/submit',
     sessionStatus: '/raters/session-status',
     endSession: '/raters/end-session',
+    feedback: '/raters/feedback',
     assistanceStart: '/raters/assistance/start',
     queue: '/raters/queue',
     assistanceObservation: '/raters/assistance/observation',
@@ -967,6 +968,14 @@ export const api = {
     return requestJson<MessageResponse>(routes.rater.endSession, {
       method: 'POST',
       headers: { 'X-Rater-Session': sessionToken },
+    });
+  },
+
+  async submitFeedback(sessionToken: string, feedback: string): Promise<MessageResponse> {
+    return requestJson<MessageResponse>(routes.rater.feedback, {
+      method: 'POST',
+      headers: { 'X-Rater-Session': sessionToken },
+      json: { feedback },
     });
   },
 

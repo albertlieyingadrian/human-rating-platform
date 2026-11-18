@@ -52,6 +52,9 @@ EXPORT_COLUMNS = [
     "exclusion_key",
     "assistance_method",
     "assistance_outcome",
+    # What the rater wrote on the optional end-of-session screen. Per rater,
+    # so it repeats on each of their rows; blank if they skipped it.
+    "rater_feedback",
 ]
 
 DOCUMENT_EXPORT_COLUMNS = ["row_id", "question_id", "question_text"]
@@ -137,6 +140,7 @@ def _build_export_row(
         question.exclusion_key or "",
         assistance_method or "",
         assistance_outcome or "unknown",
+        rater.feedback or "",
     ]
 
 
