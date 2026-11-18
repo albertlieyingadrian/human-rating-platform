@@ -444,12 +444,12 @@ On Linux, headless Chromium also needs OS libraries that CI installs via `--with
 
 ### Coding agents
 
-If you use Claude Code, Codex or another coding agent, this is automatic — the repo checks in its agent config, so a fresh clone needs no setup:
+The repo checks in its agent config, so a fresh clone needs no setup. The instructions and skills are shared; the rest is Claude Code only, and only Claude Code has been tested:
 
-- [AGENTS.md](AGENTS.md) tells the agent to run `make ci` before pushing or updating a PR, in every session. [CLAUDE.md](CLAUDE.md) only imports it.
-- The `/lint` and `/ci` skills ([.agents/skills/](.agents/skills/), symlinked from `.claude/skills`) run the gates on demand and know how to fix each gate's failures.
-- The `/dev` skill starts, stops, restarts, or checks all local servers (backend + frontend) — ask it to "bring up the app" or "restart the servers".
-- [.claude/settings.json](.claude/settings.json) pre-approves the make targets so Claude runs them without permission prompts.
+- [AGENTS.md](AGENTS.md) tells any agent that reads it to run `make ci` before pushing or updating a PR, in every session. [CLAUDE.md](CLAUDE.md) only imports it.
+- The `lint` and `ci` skills live in [.agents/skills/](.agents/skills/), symlinked from `.claude/skills`. They run the gates on demand and know how to fix each gate's failures. In Claude Code they are `/lint` and `/ci`.
+- The `dev` skill (`/dev`) starts, stops, restarts, or checks all local servers (backend + frontend) — ask it to "bring up the app" or "restart the servers".
+- [.claude/settings.json](.claude/settings.json) pre-approves the make targets so Claude Code runs them without permission prompts. Other agents will ask.
 
 ---
 

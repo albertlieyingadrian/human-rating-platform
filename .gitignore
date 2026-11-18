@@ -29,7 +29,8 @@ data/
 artifacts/
 
 # Local assistant/worktree artifacts, except shared Claude Code config.
-# .claude/skills is a symlink to .agents/skills, the copy every agent reads.
+# No trailing slash on skills: it is a symlink to .agents/skills, and a slash
+# would match only a directory, leaving the symlink ignored.
 .claude/*
 !.claude/settings.json
 !.claude/skills
