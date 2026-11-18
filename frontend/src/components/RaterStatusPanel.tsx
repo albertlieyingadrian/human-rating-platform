@@ -7,8 +7,9 @@ interface RaterStatusPanelProps {
   graceMinutes: number;
   /** The readout rows (TimerChip). */
   children: ReactNode;
-  /** Adds an Instructions row above the clocks. Lives here rather than in the
-   *  page header because this panel floats over the header's right end. */
+  /** Adds an Instructions button floating just below the clocks. Lives here
+   *  rather than in the page header because this panel floats over the
+   *  header's right end. */
   onOpenInstructions?: () => void;
 }
 
@@ -18,11 +19,21 @@ function RaterStatusPanel({ graceMinutes, children, onOpenInstructions }: RaterS
   const [helpOpen, setHelpOpen] = useState(false);
 
   const styles = {
-    panel: {
+    // Holds the clocks and, separately below them, the Instructions button.
+    dock: {
       position: 'fixed' as const,
       top: 20,
       right: 20,
       zIndex: 30,
+      display: 'flex',
+      flexDirection: 'column' as const,
+      alignItems: 'flex-end',
+      gap: 8,
+    },
+    panel: {
+      // Above the Instructions button, so the clock help can cover it.
+      position: 'relative' as const,
+      zIndex: 1,
       // Width, background and shadow come from .rater-status-panel (index.css),
       // which owns the small see-through rest state and the solid expanded one.
       color: '#fff',
@@ -42,20 +53,16 @@ function RaterStatusPanel({ graceMinutes, children, onOpenInstructions }: RaterS
       borderRadius: 'calc(var(--radius-sm) - 2px)',
     },
     instructions: {
+      // Background and hover come from .rater-instructions-button (index.css).
       display: 'flex',
       alignItems: 'center',
-      // The expanded panel widens leftward; pinning the label right keeps it
-      // under the pointer.
-      justifyContent: 'flex-end',
       gap: 8,
-      width: '100%',
       minHeight: 32,
-      padding: '5px 10px',
+      padding: '5px 12px',
       border: 'none',
-      borderBottom: '1px solid rgba(255, 255, 255, 0.2)',
-      borderRadius: 'calc(var(--radius-sm) - 2px) calc(var(--radius-sm) - 2px) 0 0',
-      color: 'inherit',
-      font: 'inherit',
+      borderRadius: 'var(--radius-sm)',
+      color: '#fff',
+      fontFamily: 'var(--font-mono)',
       fontSize: 'var(--text-label)',
       fontWeight: 600,
       textTransform: 'uppercase' as const,
@@ -94,13 +101,54 @@ function RaterStatusPanel({ graceMinutes, children, onOpenInstructions }: RaterS
   };
 
   return (
-    <div className="rater-status-panel" style={styles.panel} data-testid="rater-status-panel">
-      {/* First, so rows the expanded panel reveals open below it and the
-          button stays where the pointer is. */}
+    <div style={styles.dock}>
+      <div className="rater-status-panel" style={styles.panel} data-testid="rater-status-panel">
+        <div
+          className="rsp-readout"
+          style={styles.readout}
+          tabIndex={0}
+          aria-describedby={helpOpen ? 'rater-status-help' : undefined}
+          onMouseEnter={() => setHelpOpen(true)}
+          onMouseLeave={() => setHelpOpen(false)}
+          onFocus={() => setHelpOpen(true)}
+          onBlur={() => setHelpOpen(false)}
+          data-testid="rater-status-readout"
+        >
+          {children}
+        </div>
+        {helpOpen && (
+          <div id="rater-status-help" role="tooltip" style={styles.help} data-testid="rater-status-help">
+            <div style={styles.term}>Session</div>
+            <p style={styles.detail}>
+              The time left in your session. When it reaches zero no new questions are served
+              {graceMinutes > 0 ? (
+                <>
+                  , and you get {graceMinutes} more {graceMinutes === 1 ? 'minute' : 'minutes'} to
+                  send the question you are on.
+                </>
+              ) : (
+                <>.</>
+              )}
+            </p>
+            <div style={styles.term}>Current question</div>
+            <p style={styles.detail}>
+              We strongly recommend spending <strong>no more than {QUESTION_TIME_LIMIT_MINUTES} minutes</strong>{' '}
+              on any one question. This clock counts down from {QUESTION_TIME_LIMIT_MINUTES}:00 and
+              restarts with each new question.
+            </p>
+            <p style={styles.lastDetail}>
+              When it runs out it turns red and counts the extra time. Nothing is cut off and your
+              answer is still accepted, but please give your best answer and move on.
+            </p>
+          </div>
+        )}
+      </div>
+      {/* Outside the panel, so pointing at it leaves the clocks collapsed and
+          the button where the pointer found it. */}
       {onOpenInstructions && (
         <button
           type="button"
-          className="rsp-action"
+          className="rater-instructions-button"
           style={styles.instructions}
           aria-haspopup="dialog"
           onClick={(e) => {
@@ -117,45 +165,6 @@ function RaterStatusPanel({ graceMinutes, children, onOpenInstructions }: RaterS
           </svg>
           Instructions
         </button>
-      )}
-      <div
-        className="rsp-readout"
-        style={styles.readout}
-        tabIndex={0}
-        aria-describedby={helpOpen ? 'rater-status-help' : undefined}
-        onMouseEnter={() => setHelpOpen(true)}
-        onMouseLeave={() => setHelpOpen(false)}
-        onFocus={() => setHelpOpen(true)}
-        onBlur={() => setHelpOpen(false)}
-        data-testid="rater-status-readout"
-      >
-        {children}
-      </div>
-      {helpOpen && (
-        <div id="rater-status-help" role="tooltip" style={styles.help} data-testid="rater-status-help">
-          <div style={styles.term}>Session</div>
-          <p style={styles.detail}>
-            The time left in your session. When it reaches zero no new questions are served
-            {graceMinutes > 0 ? (
-              <>
-                , and you get {graceMinutes} more {graceMinutes === 1 ? 'minute' : 'minutes'} to
-                send the question you are on.
-              </>
-            ) : (
-              <>.</>
-            )}
-          </p>
-          <div style={styles.term}>Current question</div>
-          <p style={styles.detail}>
-            We strongly recommend spending <strong>no more than {QUESTION_TIME_LIMIT_MINUTES} minutes</strong>{' '}
-            on any one question. This clock counts down from {QUESTION_TIME_LIMIT_MINUTES}:00 and
-            restarts with each new question.
-          </p>
-          <p style={styles.lastDetail}>
-            When it runs out it turns red and counts the extra time. Nothing is cut off and your
-            answer is still accepted, but please give your best answer and move on.
-          </p>
-        </div>
       )}
     </div>
   );
