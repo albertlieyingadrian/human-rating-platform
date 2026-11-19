@@ -125,7 +125,9 @@ jobs:
 
   test-frontend:
     name: Frontend Tests (playwright)
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, which Playwright 1.58 has no
+    # chromium build for. Move with the next Playwright upgrade.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout
