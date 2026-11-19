@@ -113,50 +113,47 @@ def test_sniff_mime_reads_the_bytes_not_the_label(data: bytes, mime: str):
     assert media.sniff_mime(data) == mime
 
 
-def test_gcs_sizes_come_from_object_reads_never_a_listing(monkeypatch: pytest.MonkeyPatch):
-    """The platform's grant covers objects under the prefix, not listing the
-    bucket, so the check reads each object's metadata by name."""
-    held = {DIGEST: len(PNG), "1" * 64: 9_000_000}
-    read: list[tuple[str, str]] = []
+def test_gcs_sizes_come_from_listings_that_fit_the_glob_limit(monkeypatch: pytest.MonkeyPatch):
+    """Digests are checked by listing, each glob within Cloud Storage's
+    1024-byte cap (a longer one is refused with a 400)."""
+    present = [f"{i:064x}" for i in range(20)]
+    absent = [f"{i:064x}" for i in range(100, 120)]
+    held = {digest: 1000 + i for i, digest in enumerate(present)}
+    globs: list[str] = []
 
     class _Blob:
-        def __init__(self, size: int) -> None:
+        def __init__(self, name: str, size: int) -> None:
+            self.name = name
             self.size = size
 
-    class _Bucket:
-        def __init__(self, name: str) -> None:
-            self.name = name
-
-        def get_blob(self, blob_name: str):
-            read.append((self.name, blob_name))
-            digest = blob_name.removeprefix("media/")
-            return _Blob(held[digest]) if digest in held else None
-
     class _Client:
-        # No list_blobs: a listing would raise AttributeError here, as it
-        # raises 403 against the real bucket.
-        def bucket(self, name: str) -> _Bucket:
-            return _Bucket(name)
+        def list_blobs(self, bucket_name: str, *, prefix: str | None, match_glob: str):
+            assert (bucket_name, prefix) == ("bucket", "media/")
+            assert match_glob.startswith("media/{") and match_glob.endswith("}")
+            globs.append(match_glob)
+            wanted = match_glob[len("media/{") : -1].split(",")
+            return [_Blob(f"media/{d}", held[d]) for d in wanted if d in held]
 
     monkeypatch.setattr(media_source, "_client", lambda settings: _Client())
     settings = MediaSettings(source_url="gs://bucket/media")
-    digests = [DIGEST, "0" * 64, "1" * 64]
+    digests = present + absent
 
     assert asyncio.run(media.object_sizes(settings, digests)) == held
-    assert sorted(read) == sorted(("bucket", f"media/{d}") for d in digests)
-    assert asyncio.run(media.missing_digests(settings, digests)) == ["0" * 64]
+    assert all(len(glob.encode()) <= 1024 for glob in globs)
+    # 40 digests at 15 per glob: three listings, not forty reads.
+    assert len(globs) == 3
+    assert sorted(d for glob in globs for d in glob[len("media/{") : -1].split(",")) == sorted(
+        digests
+    )
+    assert asyncio.run(media.missing_digests(settings, digests)) == absent
 
 
 def test_gcs_permission_failure_is_a_source_error(monkeypatch: pytest.MonkeyPatch):
     from google.api_core import exceptions as gcs_exceptions
 
-    class _Bucket:
-        def get_blob(self, blob_name: str):
-            raise gcs_exceptions.Forbidden("no access")
-
     class _Client:
-        def bucket(self, name: str) -> _Bucket:
-            return _Bucket()
+        def list_blobs(self, bucket_name: str, *, prefix: str | None, match_glob: str):
+            raise gcs_exceptions.Forbidden("no access")
 
     monkeypatch.setattr(media_source, "_client", lambda settings: _Client())
     settings = MediaSettings(source_url="gs://bucket/media")

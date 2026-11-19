@@ -190,6 +190,11 @@ async def read_bytes(settings: MediaSettings, digest: str) -> bytes:
     return await asyncio.to_thread(_read_gcs, settings, bucket_name, prefix, digest)
 
 
+# Cloud Storage refuses a listing glob longer than this (400). A digest is 64
+# bytes plus a comma, so about 15 fit in one listing.
+_GLOB_MAX_BYTES = 1024
+
+
 def _sizes_file(root: Path, digests: list[str]) -> dict[str, int]:
     sizes: dict[str, int] = {}
     for digest in digests:
@@ -202,19 +207,30 @@ def _sizes_file(root: Path, digests: list[str]) -> dict[str, int]:
 def _sizes_gcs(
     settings: MediaSettings, bucket_name: str, prefix: str, digests: list[str]
 ) -> dict[str, int]:
-    # One metadata read per object, not a listing: the platform's grant is
-    # conditioned on the object prefix, and Cloud Storage checks a listing
-    # against the bucket, which no prefix condition matches (403).
-    bucket = _client(settings).bucket(bucket_name)
+    # Listings, each naming as many digests as one `{a,b,...}` glob holds, a
+    # few at a time: 2000 images check in about 2s, against about 30s for a
+    # metadata read per object. The platform's account needs list access
+    # under the prefix for this, a grant separate from its object reads.
+    client = _client(settings)
+    # The cap is in bytes, and a prefix need not be ASCII.
+    overhead = len(gcs.blob_name_under(prefix, "{}").encode())
+    per_listing = max(1, (_GLOB_MAX_BYTES - overhead + 1) // 65)
+    batches = [digests[i : i + per_listing] for i in range(0, len(digests), per_listing)]
 
-    def size_of(digest: str) -> int | None:
-        blob = bucket.get_blob(gcs.blob_name_under(prefix, digest))
-        return None if blob is None or blob.size is None else int(blob.size)
+    def sizes_of(batch: list[str]) -> dict[str, int]:
+        glob = gcs.blob_name_under(prefix, "{" + ",".join(batch) + "}")
+        blobs = client.list_blobs(
+            bucket_name, prefix=f"{prefix}/" if prefix else None, match_glob=glob
+        )
+        named = {blob.name.rsplit("/", 1)[-1]: blob.size for blob in blobs}
+        return {d: int(named[d]) for d in batch if named.get(d) is not None}
 
+    sizes: dict[str, int] = {}
     with _translating_gcs_errors(f"gs://{bucket_name}/{prefix}"):
         with ThreadPoolExecutor(max_workers=_GCS_CONCURRENCY) as pool:
-            found = list(pool.map(size_of, digests))
-    return {digest: size for digest, size in zip(digests, found) if size is not None}
+            for found in pool.map(sizes_of, batches):
+                sizes.update(found)
+    return sizes
 
 
 async def object_sizes(settings: MediaSettings, digests: list[str]) -> dict[str, int]:
