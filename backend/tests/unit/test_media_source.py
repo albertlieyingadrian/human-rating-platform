@@ -114,8 +114,6 @@ def test_sniff_mime_reads_the_bytes_not_the_label(data: bytes, mime: str):
 
 
 def test_gcs_sizes_come_from_listings_that_fit_the_glob_limit(monkeypatch: pytest.MonkeyPatch):
-    """Digests are checked by listing, each glob within Cloud Storage's
-    1024-byte cap (a longer one is refused with a 400)."""
     present = [f"{i:064x}" for i in range(20)]
     absent = [f"{i:064x}" for i in range(100, 120)]
     held = {digest: 1000 + i for i, digest in enumerate(present)}
@@ -140,7 +138,6 @@ def test_gcs_sizes_come_from_listings_that_fit_the_glob_limit(monkeypatch: pytes
 
     assert asyncio.run(media.object_sizes(settings, digests)) == held
     assert all(len(glob.encode()) <= 1024 for glob in globs)
-    # 40 digests at 15 per glob: three listings, not forty reads.
     assert len(globs) == 3
     assert sorted(d for glob in globs for d in glob[len("media/{") : -1].split(",")) == sorted(
         digests
