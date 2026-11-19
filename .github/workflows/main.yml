@@ -17,9 +17,6 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Every job names its Ubuntu release. ubuntu-latest moves without notice: its
-# switch to 26.04 broke the Playwright job, whose pinned version had no
-# chromium build for it. Bump all five together, on purpose.
 jobs:
   lint-backend:
     name: Lint Backend (ruff)
