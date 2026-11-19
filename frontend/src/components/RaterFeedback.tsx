@@ -67,8 +67,8 @@ function RaterFeedback({ submitting, returnsToProlific, onSubmit, onSkip }: Rate
           margin: '0 0 18px',
         }}
       >
-        Your answers are saved. If anything was unclear, broken or frustrating, tell us here. You
-        can skip this step.
+        Your answers are saved. If anything was unclear, broken or frustrating, tell us here.
+        Please do not include any personal information. You can skip this step.
       </label>
 
       <textarea
