@@ -8,6 +8,8 @@ integration is enabled.
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import logging
 import secrets
 import string
@@ -387,6 +389,36 @@ async def get_study_submission_counts(
         )
 
     return summarize_submissions(results)
+
+
+async def get_study_participant_countries(
+    *,
+    settings: ProlificSettings,
+    study_id: str,
+) -> dict[str, str]:
+    """Map each participant in a study to their country of residence.
+
+    The submissions endpoint carries no demographics; the only source is the
+    study's demographic export (GET /studies/{id}/export/), the same CSV as
+    "Download demographic data" on Prolific's study page. Its column set
+    varies by study (screeners add columns), so rows are read by header name.
+    Values pass through as Prolific writes them, including its `DATA_EXPIRED`
+    and `CONSENT_REVOKED` markers.
+    """
+    if not settings.enabled:
+        raise RuntimeError("get_study_participant_countries called while Prolific is disabled")
+
+    async with _build_client(settings) as client:
+        response = await client.get(f"/studies/{study_id}/export/")
+        _raise_for_status(response)
+
+    reader = csv.DictReader(io.StringIO(response.text))
+    missing = {"Participant id", "Country of residence"} - set(reader.fieldnames or [])
+    if missing:
+        raise ValueError(
+            f"Prolific demographic export for {study_id} is missing columns: {sorted(missing)}"
+        )
+    return {row["Participant id"]: row["Country of residence"] or "" for row in reader}
 
 
 async def get_project(
