@@ -39,7 +39,7 @@ from .urls import proxy_url
 logger = logging.getLogger(__name__)
 
 # Existence checks and reads fan out to the bucket; keep the fan-out bounded.
-_GCS_CONCURRENCY = 8
+_GCS_CONCURRENCY = 32
 
 
 class MediaSourceError(RuntimeError):
@@ -190,10 +190,6 @@ async def read_bytes(settings: MediaSettings, digest: str) -> bytes:
     return await asyncio.to_thread(_read_gcs, settings, bucket_name, prefix, digest)
 
 
-# Cloud Storage refuses a longer listing glob with a 400.
-_GLOB_MAX_BYTES = 1024
-
-
 def _sizes_file(root: Path, digests: list[str]) -> dict[str, int]:
     sizes: dict[str, int] = {}
     for digest in digests:
@@ -206,25 +202,17 @@ def _sizes_file(root: Path, digests: list[str]) -> dict[str, int]:
 def _sizes_gcs(
     settings: MediaSettings, bucket_name: str, prefix: str, digests: list[str]
 ) -> dict[str, int]:
-    client = _client(settings)
-    overhead = len(gcs.blob_name_under(prefix, "{}").encode())
-    per_listing = max(1, (_GLOB_MAX_BYTES - overhead + 1) // 65)
-    batches = [digests[i : i + per_listing] for i in range(0, len(digests), per_listing)]
+    # Read by name: the platform's grant does not allow listing.
+    bucket = _client(settings).bucket(bucket_name)
 
-    def sizes_of(batch: list[str]) -> dict[str, int]:
-        glob = gcs.blob_name_under(prefix, "{" + ",".join(batch) + "}")
-        blobs = client.list_blobs(
-            bucket_name, prefix=f"{prefix}/" if prefix else None, match_glob=glob
-        )
-        named = {blob.name.rsplit("/", 1)[-1]: blob.size for blob in blobs}
-        return {d: int(named[d]) for d in batch if named.get(d) is not None}
+    def size_of(digest: str) -> int | None:
+        blob = bucket.get_blob(gcs.blob_name_under(prefix, digest))
+        return None if blob is None or blob.size is None else int(blob.size)
 
-    sizes: dict[str, int] = {}
     with _translating_gcs_errors(f"gs://{bucket_name}/{prefix}"):
         with ThreadPoolExecutor(max_workers=_GCS_CONCURRENCY) as pool:
-            for found in pool.map(sizes_of, batches):
-                sizes.update(found)
-    return sizes
+            found = list(pool.map(size_of, digests))
+    return {digest: size for digest, size in zip(digests, found) if size is not None}
 
 
 async def object_sizes(settings: MediaSettings, digests: list[str]) -> dict[str, int]:
