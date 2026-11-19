@@ -17,10 +17,13 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Every job names its Ubuntu release. ubuntu-latest moves without notice: its
+# switch to 26.04 broke the Playwright job, whose pinned version had no
+# chromium build for it. Bump all five together, on purpose.
 jobs:
   lint-backend:
     name: Lint Backend (ruff)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,7 +42,7 @@ jobs:
 
   lint-frontend:
     name: Lint Frontend (eslint + tsc)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -62,7 +65,7 @@ jobs:
 
   lint-yaml:
     name: Lint YAML (yamllint)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -78,7 +81,7 @@ jobs:
 
   test-backend:
     name: Backend Tests (docker compose)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       ADMIN_AUTH_ENABLED: "false"
     timeout-minutes: 30
@@ -125,9 +128,7 @@ jobs:
 
   test-frontend:
     name: Frontend Tests (playwright)
-    # Pinned: ubuntu-latest moved to 26.04, which Playwright 1.58 has no
-    # chromium build for. Move with the next Playwright upgrade.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - name: Checkout
