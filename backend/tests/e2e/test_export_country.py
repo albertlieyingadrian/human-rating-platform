@@ -1,9 +1,3 @@
-"""Rater country of residence in the ratings export.
-
-Prolific only serves it through a study's demographic export, so the ratings
-export fetches that CSV for each of the experiment's rounds when it is built.
-"""
-
 from __future__ import annotations
 
 import csv
@@ -23,8 +17,6 @@ from test_consent import _consent, _create_experiment, _headers, _start, _upload
 PROLIFIC_BASE = "https://api.prolific.com/api/v1"
 STUDY_ID = "study-country-1"
 
-# Shaped like a real export: a quoted multi-value column ahead of the country,
-# and a screener column that shifts positions between studies.
 _DEMOGRAPHICS = (
     "Submission id,Participant id,Status,Fluent languages,Fact-checking,"
     "Country of birth,Country of residence,Nationality\n"
@@ -35,7 +27,6 @@ _DEMOGRAPHICS = (
 
 @pytest.fixture
 def disable_prolific():
-    # The `client` fixture turns Prolific on; this runs after it and turns it off.
     settings = get_settings()
     original_token = settings.prolific.api_token
     settings.prolific.api_token = ""

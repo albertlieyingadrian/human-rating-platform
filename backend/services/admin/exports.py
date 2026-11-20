@@ -47,9 +47,6 @@ EXPORT_COLUMNS = [
     "rater_prolific_id",
     "rater_study_id",
     "rater_session_id",
-    # Country of residence from Prolific's demographic export, read at export
-    # time. Blank for raters Prolific has no row for (previews, studies it can
-    # no longer serve) or when the lookup fails.
     "rater_country_of_residence",
     # Which consent statement the rater agreed to ("standard v1") and when.
     # Blank for raters from before consent was recorded.
@@ -160,12 +157,7 @@ def _build_export_row(
 
 
 async def _fetch_rater_countries(experiment_id: int, db: AsyncSession) -> dict[str, str]:
-    """Prolific participant id -> country of residence, across the experiment's rounds.
-
-    One demographic export per round, fetched concurrently. A round whose
-    export fails is logged and skipped, so its raters export with a blank
-    country instead of the whole download failing.
-    """
+    """Prolific participant id -> country of residence, across the experiment's rounds."""
     settings = get_settings().prolific
     if not settings.enabled:
         return {}
