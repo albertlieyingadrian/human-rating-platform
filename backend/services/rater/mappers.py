@@ -56,6 +56,8 @@ def build_rater_start_response(
     consented_at: datetime | None,
     assistance_method: str = "none",
     assistance_instructions: str | None = None,
+    block_copy_paste: bool = False,
+    forbid_outside_tools: bool = False,
 ) -> RaterStartResponse:
     # Sent as Markdown; the frontend renders it. Blank collapses to None so
     # the frontend can cleanly omit the section.
@@ -73,6 +75,8 @@ def build_rater_start_response(
         rater_session_token=rater_session_token,
         assistance_method=assistance_method,
         assistance_instructions=assistance_instructions,
+        block_copy_paste=block_copy_paste,
+        forbid_outside_tools=forbid_outside_tools,
         consent_statement_markdown=terms.consent_markdown,
         consented_at=consented_at,
         debrief_markdown=terms.debrief_markdown,

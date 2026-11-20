@@ -130,8 +130,22 @@ function getProlificSessionParams(params: {
   };
 }
 
+const blockClipboard = (event: { preventDefault: () => void }) => event.preventDefault();
+const NO_COPY_PROPS = {
+  className: 'rater-no-copy',
+  onCopy: blockClipboard,
+  onCut: blockClipboard,
+  onPaste: blockClipboard,
+  onDragStart: blockClipboard,
+  onDrop: blockClipboard,
+};
+
 function hasIntroContent(session: Session): boolean {
-  return Boolean(session.experiment_description_markdown || session.assistance_instructions);
+  return Boolean(
+    session.experiment_description_markdown ||
+      session.assistance_instructions ||
+      session.forbid_outside_tools,
+  );
 }
 
 function RaterView() {
@@ -760,6 +774,8 @@ function RaterView() {
           experimentName={session.experiment_name}
           descriptionMarkdown={session.experiment_description_markdown}
           assistanceInstructions={session.assistance_instructions}
+          forbidOutsideTools={session.forbid_outside_tools === true}
+          studyProvidesAi={Boolean(hasAssistance)}
           sessionMinutes={minutesBetween(session.session_start, session.session_end_time)}
           graceMinutes={Math.round(session.session_grace_seconds / 60)}
           onContinue={handleIntroContinue}
@@ -769,7 +785,7 @@ function RaterView() {
   }
 
   return (
-    <div style={styles.container}>
+    <div style={styles.container} {...(session.block_copy_paste ? NO_COPY_PROPS : {})}>
       {isPreview && (
         <div style={previewBannerStyle}>
           Preview mode — ratings submitted here are real and will appear in your data.
@@ -814,6 +830,8 @@ function RaterView() {
           experimentName={session.experiment_name}
           descriptionMarkdown={session.experiment_description_markdown}
           assistanceInstructions={session.assistance_instructions}
+          forbidOutsideTools={session.forbid_outside_tools === true}
+          studyProvidesAi={Boolean(hasAssistance)}
           sessionMinutes={minutesBetween(session.session_start, session.session_end_time)}
           graceMinutes={Math.round(session.session_grace_seconds / 60)}
           onClose={closeInstructions}
@@ -853,6 +871,7 @@ function RaterView() {
               assistanceAnswer={assistanceStep?.payload.synthesis?.answer ?? null}
               humanPromptPrefix={session?.human_prompt_prefix ?? null}
               humanPromptSuffix={session?.human_prompt_suffix ?? null}
+              blockCopy={session.block_copy_paste === true}
             />
             </fieldset>
           </div>
@@ -867,6 +886,7 @@ function RaterView() {
               onSubmit={handleSubmit}
               humanPromptPrefix={session?.human_prompt_prefix ?? null}
               humanPromptSuffix={session?.human_prompt_suffix ?? null}
+              blockCopy={session.block_copy_paste === true}
             />
             </fieldset>
           )}

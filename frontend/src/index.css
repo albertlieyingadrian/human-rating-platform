@@ -1646,3 +1646,15 @@ input[type="range"].confidence-unset::-moz-range-thumb {
     padding: 16px !important;
   }
 }
+
+/* Fields stay selectable so a rater can still edit an answer. */
+.rater-no-copy {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.rater-no-copy input,
+.rater-no-copy textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}

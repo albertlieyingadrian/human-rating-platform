@@ -166,6 +166,8 @@ async def start_session(
                 consented_at=None,
                 assistance_method=experiment.assistance_method,
                 assistance_instructions=assistance_instructions,
+                block_copy_paste=experiment.block_copy_paste,
+                forbid_outside_tools=experiment.forbid_outside_tools,
             )
         validate_existing_rater_can_resume(existing_rater, policy)
         existing_consent = await fetch_consent_record(existing_rater.id, db)
@@ -190,6 +192,8 @@ async def start_session(
             consented_at=existing_consent.accepted_at if existing_consent else None,
             assistance_method=experiment.assistance_method,
             assistance_instructions=assistance_instructions,
+            block_copy_paste=experiment.block_copy_paste,
+            forbid_outside_tools=experiment.forbid_outside_tools,
         )
 
     rater = Rater(
@@ -275,6 +279,8 @@ async def start_session(
         consented_at=None,
         assistance_method=experiment.assistance_method,
         assistance_instructions=assistance_instructions,
+        block_copy_paste=experiment.block_copy_paste,
+        forbid_outside_tools=experiment.forbid_outside_tools,
     )
 
 

@@ -54,6 +54,8 @@ export interface Experiment {
   debrief_statement_ref: string | null;
   is_markdown: boolean;
   render_math: boolean;
+  block_copy_paste: boolean;
+  forbid_outside_tools: boolean;
   prolific_pool: string | null;
   status: ExperimentStatus;
   // Non-null ISO timestamp when the experiment has been archived (soft-hidden
@@ -423,6 +425,9 @@ export interface Session {
   rater_session_token: string;
   assistance_method: string;
   assistance_instructions: string | null;
+  // Absent on a session stored before these existed, which reads as off.
+  block_copy_paste?: boolean;
+  forbid_outside_tools?: boolean;
   // The consent statement with the study's placeholders filled, as Markdown.
   // Shown until `consented_at` is set.
   consent_statement_markdown: string;

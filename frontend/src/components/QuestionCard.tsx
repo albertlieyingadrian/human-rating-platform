@@ -53,6 +53,7 @@ interface QuestionCardProps {
   // constant for the session and either may be null.
   humanPromptPrefix?: string | null;
   humanPromptSuffix?: string | null;
+  blockCopy?: boolean;
 }
 
 type QuestionDisplay = {
@@ -375,10 +376,14 @@ function parseOptions(rawOptions: string | null): string[] {
 
 // The title is deliberately generic: it shows up in the popup's tab, and the
 // external question id would tell a rater which dataset the item came from.
+const NO_COPY_BODY_ATTRS =
+  ' oncopy="return false" oncut="return false" ondragstart="return false" style="-webkit-user-select: none; user-select: none"';
+
 async function buildLongContextDocumentHtml(
   documentText: string,
   isMarkdown: boolean,
   math: MathRenderer | null,
+  blockCopy: boolean,
 ): Promise<string> {
   const title = 'Document';
   // The window is a standalone HTML string, so the card's Markdown component is
@@ -443,7 +448,7 @@ async function buildLongContextDocumentHtml(
     }
   </style>
 </head>
-<body>
+<body${blockCopy ? NO_COPY_BODY_ATTRS : ''}>
   <main>
     <h1>${escapeHtml(title)}</h1>
     ${body}
@@ -452,7 +457,7 @@ async function buildLongContextDocumentHtml(
 </html>`;
 }
 
-function QuestionCard({ question, onSubmit, disabled = false, assistanceAnswer = null, assistanceActive = false, humanPromptPrefix = null, humanPromptSuffix = null }: QuestionCardProps) {
+function QuestionCard({ question, onSubmit, disabled = false, assistanceAnswer = null, assistanceActive = false, humanPromptPrefix = null, humanPromptSuffix = null, blockCopy = false }: QuestionCardProps) {
   const [selectedAnswer, setSelectedAnswer] = useState('');
   const [freeTextAnswer, setFreeTextAnswer] = useState('');
   // Starts unset and is required: a preset value would be recorded as the
@@ -495,7 +500,7 @@ function QuestionCard({ question, onSubmit, disabled = false, assistanceAnswer =
 
     let url: string | null = null;
     let cancelled = false;
-    void buildLongContextDocumentHtml(display.documentText, question.is_markdown, math).then(
+    void buildLongContextDocumentHtml(display.documentText, question.is_markdown, math, blockCopy).then(
       (html) => {
         if (cancelled) return;
         url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
@@ -508,7 +513,7 @@ function QuestionCard({ question, onSubmit, disabled = false, assistanceAnswer =
       if (url) URL.revokeObjectURL(url);
       setDocumentUrl(null);
     };
-  }, [display.documentText, question.is_markdown, mathReady, math]);
+  }, [display.documentText, question.is_markdown, mathReady, math, blockCopy]);
 
   // Prefill with AI's suggested answer when assistance completes
   useEffect(() => {
