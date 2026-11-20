@@ -332,7 +332,7 @@ export function EthicsPanel({
               <p style={{ color: 'var(--muted)' }}>This experiment has no debrief screen.</p>
             ) : (
               <ProseMarkdown
-                className="rater-consent-statement"
+                className="rater-consent-statement rater-prose"
                 style={{ fontSize: 15, lineHeight: 1.65 }}
                 source={
                   previewKind === 'consent' ? preview.consent_markdown : preview.debrief_markdown ?? ''
