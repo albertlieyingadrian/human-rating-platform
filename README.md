@@ -720,7 +720,7 @@ contributors.
 - `GET /api/admin/experiments/{id}/uploads` — list uploads for experiment
 - `GET /api/admin/experiments/{id}/stats` — experiment statistics
 - `GET /api/admin/experiments/{id}/analytics` — rating analytics
-- `GET /api/admin/experiments/{id}/export` — export ratings as CSV. `rater_country_of_residence` is read from Prolific's demographic export for each round at download time; it is blank for preview raters, when Prolific is not configured, or when that lookup fails.
+- `GET /api/admin/experiments/{id}/export` — export ratings as CSV
 - `POST /api/admin/experiments/{id}/prolific/pilot` — create the pilot round draft
 - `POST /api/admin/experiments/{id}/launch` — create the pilot draft from a complete dataset card
 - `GET /api/admin/experiments/{id}/launch/preview` — list the experiments that pilot would exclude
