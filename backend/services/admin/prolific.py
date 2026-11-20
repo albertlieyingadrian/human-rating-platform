@@ -391,6 +391,9 @@ async def get_study_submission_counts(
     return summarize_submissions(results)
 
 
+_COUNTRY_OF_RESIDENCE_COLUMNS = ("Country of residence", "Current country of residence")
+
+
 async def get_study_participant_countries(
     *,
     settings: ProlificSettings,
@@ -399,9 +402,11 @@ async def get_study_participant_countries(
     """Map each participant in a study to their country of residence.
 
     The submissions endpoint carries no demographics; the only source is the
-    study's demographic export (GET /studies/{id}/export/), the same CSV as
-    "Download demographic data" on Prolific's study page. Its column set
-    varies by study (screeners add columns), so rows are read by header name.
+    study's demographic export (POST /studies/{id}/demographic-export/; the
+    older GET /studies/{id}/export/ is deprecated). No filters are requested,
+    so the CSV holds only the base demographic columns. The live API heads the column
+    "Country of residence" while Prolific's docs show "Current country of
+    residence", so either is read.
     Values pass through as Prolific writes them, including its `DATA_EXPIRED`
     and `CONSENT_REVOKED` markers.
     """
@@ -409,16 +414,22 @@ async def get_study_participant_countries(
         raise RuntimeError("get_study_participant_countries called while Prolific is disabled")
 
     async with _build_client(settings) as client:
-        response = await client.get(f"/studies/{study_id}/export/")
+        response = await client.post(
+            f"/studies/{study_id}/demographic-export/", json={"filters": []}
+        )
         _raise_for_status(response)
 
     reader = csv.DictReader(io.StringIO(response.text))
-    missing = {"Participant id", "Country of residence"} - set(reader.fieldnames or [])
-    if missing:
+    fieldnames = reader.fieldnames or []
+    country_column = next(
+        (name for name in _COUNTRY_OF_RESIDENCE_COLUMNS if name in fieldnames), None
+    )
+    if "Participant id" not in fieldnames or country_column is None:
         raise ValueError(
-            f"Prolific demographic export for {study_id} is missing columns: {sorted(missing)}"
+            f"Prolific demographic export for {study_id} lacks the participant or "
+            f"country of residence column: {fieldnames}"
         )
-    return {row["Participant id"]: row["Country of residence"] or "" for row in reader}
+    return {row["Participant id"]: row[country_column] or "" for row in reader}
 
 
 async def get_project(

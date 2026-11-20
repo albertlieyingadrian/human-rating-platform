@@ -90,7 +90,7 @@ def test_export_carries_country_of_residence_from_prolific(
     experiment_id = _rated_experiment(client, sync_engine, "PID_COUNTRY")
 
     with respx.mock:
-        route = respx.get(f"{PROLIFIC_BASE}/studies/{STUDY_ID}/export/").mock(
+        route = respx.post(f"{PROLIFIC_BASE}/studies/{STUDY_ID}/demographic-export/").mock(
             return_value=Response(200, text=_DEMOGRAPHICS)
         )
         rows = _export_rows(client, experiment_id)
@@ -105,7 +105,7 @@ def test_export_leaves_country_blank_when_prolific_fails(
     experiment_id = _rated_experiment(client, sync_engine, "PID_COUNTRY")
 
     with respx.mock:
-        respx.get(f"{PROLIFIC_BASE}/studies/{STUDY_ID}/export/").mock(
+        respx.post(f"{PROLIFIC_BASE}/studies/{STUDY_ID}/demographic-export/").mock(
             return_value=Response(500, text="boom")
         )
         rows = _export_rows(client, experiment_id)
