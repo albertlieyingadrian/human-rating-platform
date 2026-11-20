@@ -19,6 +19,7 @@ from schemas import (
     AssistanceStepResponse,
     ConsentResponse,
     QuestionResponse,
+    RaterFeedbackSubmit,
     RaterStartResponse,
     RatingResponse,
     RatingSubmit,
@@ -158,6 +159,15 @@ async def end_session(
     db: AsyncSession = Depends(get_session),
 ):
     return await rater.end_session(rater_id=session.rater_id, db=db)
+
+
+@router.post("/feedback")
+async def submit_feedback(
+    body: RaterFeedbackSubmit,
+    session: RaterSession = Depends(require_rater_session),
+    db: AsyncSession = Depends(get_session),
+):
+    return await rater.submit_feedback(rater_id=session.rater_id, feedback=body.feedback, db=db)
 
 
 @router.post("/assistance/start", response_model=AssistanceStepResponse)

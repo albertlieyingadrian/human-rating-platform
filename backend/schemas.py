@@ -527,6 +527,13 @@ class SessionStatusResponse(BaseModel):
     questions_completed: int
 
 
+RATER_FEEDBACK_MAX_LENGTH = 5000
+
+
+class RaterFeedbackSubmit(BaseModel):
+    feedback: str = Field(max_length=RATER_FEEDBACK_MAX_LENGTH)
+
+
 class ConsentResponse(BaseModel):
     consented_at: datetime
     # The session clock starts at consent, so the deadline moves and the

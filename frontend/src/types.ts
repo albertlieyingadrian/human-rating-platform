@@ -531,6 +531,8 @@ export interface RaterAnalytics {
   study_id: string | null;
   session_start: string | null;
   timed_out: boolean;
+  // What they wrote on the optional end-of-session screen; null if skipped.
+  feedback: string | null;
   // "standard v1" and when they agreed; null for raters from before consent
   // was recorded.
   consent_version: string | null;

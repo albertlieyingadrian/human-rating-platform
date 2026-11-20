@@ -320,6 +320,9 @@ class Rater(SQLModel, table=True):
         default=False,
         sa_column=Column(Boolean, nullable=False, server_default=text("false")),
     )
+    # What the rater wrote on the optional feedback screen after their last
+    # question. NULL when they skipped it.
+    feedback: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
 
 class Rating(SQLModel, table=True):

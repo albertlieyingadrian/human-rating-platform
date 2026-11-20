@@ -136,6 +136,7 @@ async def start_session(
             # preview idle past the deadline once would otherwise keep counting
             # towards "ran out of time" through every clean run afterwards.
             existing_rater.timed_out = False
+            existing_rater.feedback = None
             # A preview is for seeing what raters see, and the consent screen
             # is the first thing they see.
             previous_consent = await fetch_consent_record(existing_rater.id, db)
@@ -802,3 +803,15 @@ async def end_session(
     await db.commit()
 
     return {"message": "Session ended successfully"}
+
+
+async def submit_feedback(*, rater_id: int, feedback: str, db: AsyncSession) -> dict[str, str]:
+    """Store what the rater wrote on the optional end-of-session screen.
+
+    Deliberately not gated on the session being active: the screen comes
+    after the last question, when the session has already ended.
+    """
+    rater = await fetch_rater_or_404(rater_id, db)
+    rater.feedback = feedback.strip() or None
+    await db.commit()
+    return {"message": "Feedback saved"}

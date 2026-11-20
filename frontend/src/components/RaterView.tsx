@@ -11,6 +11,7 @@ import RaterIntro from './RaterIntro';
 import StudyInstructionsDialog from './StudyInstructionsDialog';
 import RaterConsent from './RaterConsent';
 import RaterDebrief from './RaterDebrief';
+import RaterFeedback from './RaterFeedback';
 import type { Session } from '../types';
 import { useRaterQueue } from '../hooks/useRaterQueue';
 import { minutesBetween } from '../time';
@@ -163,6 +164,13 @@ function RaterView() {
   const [showConsent, setShowConsent] = useState(false);
   const [consentSubmitting, setConsentSubmitting] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
+  // The optional feedback screen sits between the last question and the
+  // completion card; true once the rater has sent something or skipped.
+  const [feedbackDone, setFeedbackDone] = useState(false);
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  // Set when a reload lands on a session the server has already closed, so
+  // end-session is not sent again (it would restamp session_end).
+  const endedBeforeReloadRef = useRef(false);
 
   const experimentId = searchParams.get('experiment_id');
   const prolificId = searchParams.get('PROLIFIC_PID');
@@ -282,6 +290,14 @@ function RaterView() {
     try {
       const status = await api.getSessionStatus(storedSession.token).catch(() => null);
       if (status) setQuestionsCompleted(status.questions_completed);
+      // Reloaded on the feedback screen: the stored session is kept until
+      // that screen is done precisely so this lands back on it, with the
+      // completion link intact, instead of on an error.
+      if (status && !status.is_active) {
+        endedBeforeReloadRef.current = true;
+        setSessionExpired(true);
+        return;
+      }
       const needsIntro = !storedSession.introAcknowledged &&
         (status?.questions_completed ?? 0) === 0 && hasIntroContent(storedSession.session);
       if (needsIntro) setShowIntro(true);
@@ -402,10 +418,21 @@ function RaterView() {
     clearStoredSession,
   ]);
 
+  const sessionOver = sessionExpired || allDone;
+  const awaitingFeedback = sessionOver && !feedbackDone && Boolean(sessionToken);
+
   useEffect(() => {
-    if (!(sessionExpired || allDone)) return;
+    if (!sessionOver) return;
     clear();
-    if (sessionToken) void api.endSession(sessionToken).catch(() => {});
+    if (sessionToken && !endedBeforeReloadRef.current) {
+      void api.endSession(sessionToken).catch(() => {});
+    }
+  }, [sessionOver, sessionToken, clear]);
+
+  useEffect(() => {
+    // Nothing below runs while the feedback screen is up: the stored session
+    // survives a reload there, and the redirect waits for the rater.
+    if (!sessionOver || awaitingFeedback) return;
     const completionUrl = session?.completion_url;
 
     // Clear persisted session once we're done or expired (always)
@@ -421,7 +448,20 @@ function RaterView() {
       window.location.href = completionUrl;
     }, 3000);
     return () => clearTimeout(timer);
-  }, [sessionExpired, allDone, session?.completion_url, session?.debrief_html, sessionToken, clearStoredSession, clear]);
+  }, [sessionOver, awaitingFeedback, session?.completion_url, session?.debrief_html, clearStoredSession]);
+
+  const handleFeedbackSubmit = useCallback(async (feedback: string) => {
+    if (sessionToken && feedback.trim()) {
+      setFeedbackSubmitting(true);
+      // Feedback is a courtesy. A failed save (the token dies shortly after
+      // a timed-out session) must not keep the rater from the completion code.
+      await api.submitFeedback(sessionToken, feedback).catch(() => {});
+      setFeedbackSubmitting(false);
+    }
+    setFeedbackDone(true);
+  }, [sessionToken]);
+
+  const handleFeedbackSkip = useCallback(() => setFeedbackDone(true), []);
 
   const afterSubmitted = async () => {
     setQuestionsCompleted(prev => prev + 1);
@@ -618,7 +658,20 @@ function RaterView() {
     );
   }
 
-  if (sessionExpired || allDone) {
+  if (awaitingFeedback) {
+    return (
+      <div style={{ ...styles.container, maxWidth: 'var(--rater-measure)' }}>
+        <RaterFeedback
+          submitting={feedbackSubmitting}
+          returnsToProlific={Boolean(session?.completion_url)}
+          onSubmit={(feedback) => void handleFeedbackSubmit(feedback)}
+          onSkip={handleFeedbackSkip}
+        />
+      </div>
+    );
+  }
+
+  if (sessionOver) {
     const completionUrl = session?.completion_url;
 
     if (session?.debrief_html) {

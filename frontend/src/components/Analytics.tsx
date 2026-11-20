@@ -385,6 +385,32 @@ function Analytics({
           )}
         </section>
       )}
+
+      {activeTab === 'raters' && analytics.raters.some((r) => r.feedback) && (
+        // Free text from the optional end-of-session screen, one entry per
+        // rater who left any. Its own card: a column would crush the table.
+        <section
+          className="an-card ph-no-capture"
+          aria-label="Rater feedback"
+          data-testid="rater-feedback-list"
+          style={{ marginTop: 16 }}
+        >
+          <ul className="an-cards">
+            {analytics.raters
+              .filter((r) => r.feedback)
+              .map((r) => (
+                <li key={r.prolific_id}>
+                  <span className="an-mono" style={{ color: 'var(--muted)' }}>
+                    {r.prolific_id}
+                  </span>
+                  <div style={{ marginTop: 4, fontSize: 13.5, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                    {r.feedback}
+                  </div>
+                </li>
+              ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

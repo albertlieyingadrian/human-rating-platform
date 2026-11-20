@@ -310,6 +310,7 @@ type MockState = {
   experimentPatches: Record<string, unknown>[];
   pinnedQuestionRequests: number[];
   submittedRatings: Record<string, unknown>[];
+  submittedFeedback: string[];
   sessionsByExperimentId: Record<number, RaterSessionRecord>;
   analyticsByExperimentId: Record<number, AnalyticsRecord>;
   statsByExperimentId: Record<number, Record<string, unknown>>;
@@ -484,6 +485,7 @@ function createMockState(): MockState {
     experimentPatches: [],
     pinnedQuestionRequests: [],
     submittedRatings: [],
+    submittedFeedback: [],
     sessionsByExperimentId: {},
     analyticsByExperimentId: {},
     statsByExperimentId: {},
@@ -1230,6 +1232,12 @@ async function installApiMocks(
       return;
     }
 
+    if (pathname === '/api/raters/feedback' && method === 'POST') {
+      state.submittedFeedback.push(request.postDataJSON().feedback);
+      await fulfillJson(route, 200, { message: 'ok' });
+      return;
+    }
+
     throw new Error(`Unhandled API request: ${method} ${pathname}`);
   });
 }
@@ -1688,7 +1696,23 @@ test('the question in hand survives the deadline and can still be submitted', as
   await page.getByRole('button', { name: 'Moderately confident' }).click();
   await page.getByRole('button', { name: /submit/i }).click();
 
+  // The optional feedback screen comes first, and holds the redirect: well
+  // past the completion card's 3 seconds the rater is still here.
+  await page.route('https://app.prolific.com/**', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/html', body: 'prolific' }),
+  );
+  await expect(page.getByTestId('feedback-screen')).toBeVisible();
+  await expect(page.getByTestId('feedback-prolific-note')).toBeVisible();
+  await expect(page.getByTestId('feedback-submit')).toBeDisabled();
+  await page.waitForTimeout(3500);
+  await expect(page).toHaveURL(/\/rate\?/);
+  await page.getByTestId('feedback-input').fill('The timer was hard to see.');
+  await page.getByTestId('feedback-submit').click();
+
   await expect(page.getByRole('heading', { name: 'Session Complete' })).toBeVisible();
+  expect(state.submittedFeedback).toEqual(['The timer was hard to see.']);
+  // Then the usual automatic return to Prolific, completion code intact.
+  await page.waitForURL('https://app.prolific.com/submissions/complete?cc=TEST1234');
 });
 
 test('twenty minutes on one question warns the rater but still takes the answer', async ({
@@ -4521,6 +4545,10 @@ test('a deception study ends on the debrief and never auto-redirects', async ({ 
   await page.getByRole('button', { name: 'Yes', exact: true }).click();
   await page.getByRole('button', { name: 'Moderately confident' }).click();
   await page.getByRole('button', { name: /submit/i }).click();
+
+  // Skipping the optional feedback sends nothing and moves straight on.
+  await page.getByTestId('feedback-skip').click();
+  expect(state.submittedFeedback).toEqual([]);
 
   const debrief = page.getByTestId('debrief-screen');
   await expect(debrief).toBeVisible();

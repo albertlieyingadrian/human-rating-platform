@@ -158,6 +158,7 @@ def build_rater_stats_bucket(
         "session_end": isoformat_utc(rater.session_end),
         "is_active": rater.is_active,
         "timed_out": rater.timed_out,
+        "feedback": rater.feedback,
         # None on raters from before consent was recorded: "not recorded",
         # never "declined".
         "consent_version": consent[0] if consent else None,
@@ -202,6 +203,7 @@ def build_rater_analytics_item(stats: dict[str, Any]) -> dict[str, Any]:
         "session_end": stats["session_end"],
         "is_active": stats["is_active"],
         "timed_out": stats["timed_out"],
+        "feedback": stats["feedback"],
         "consent_version": stats["consent_version"],
         "consented_at": stats["consented_at"],
         "num_ratings": stats["num_ratings"],
