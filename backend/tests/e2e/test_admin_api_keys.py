@@ -129,7 +129,6 @@ def test_admin_key_cannot_manage_keys(admin_client: TestClient) -> None:
     ("method", "path"),
     [
         ("POST", "/api/admin/experiments/1/prolific/pilot"),
-        ("POST", "/api/admin/experiments/1/launch"),
         ("POST", "/api/admin/experiments/1/prolific/rounds"),
         ("PATCH", "/api/admin/experiments/1/prolific/rounds/1"),
         ("POST", "/api/admin/experiments/1/prolific/rounds/1/publish"),

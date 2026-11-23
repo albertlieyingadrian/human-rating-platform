@@ -5,6 +5,7 @@ type ExperimentRecord = {
   id: number;
   name: string;
   internal_name: string | null;
+  dataset_filenames: string[];
   created_at: string;
   num_ratings_per_question: number;
   session_duration_minutes: number;
@@ -291,10 +292,8 @@ type MockState = {
   recommendationRequests: string[];
   datasetPatches: Record<string, unknown>[];
   experimentCreates: Record<string, unknown>[];
-  launchRequests: number[];
-  launchError: string | null;
-  // What GET /launch/preview reports a one-click launch would exclude.
-  launchExcluded: { id: number; name: string; internal_name: string | null }[];
+  // Every pilot create's body, in order.
+  pilotPayloads: Record<string, unknown>[];
   // Pilot check runs per experiment, and every study creation's
   // acknowledge_pilot_check flag, in order.
   pilotCheckRuns: Record<number, PilotCheckRunRecord>;
@@ -327,6 +326,7 @@ function buildExperiment(state: MockState, partial: Partial<ExperimentRecord> = 
     id: state.nextExperimentId++,
     name: 'Smoke Test Experiment',
     internal_name: null,
+    dataset_filenames: [],
     created_at: '2026-03-09T00:00:00Z',
     num_ratings_per_question: 3,
     session_duration_minutes: 60,
@@ -435,7 +435,7 @@ async function refuseUnlessAcknowledged(
   await fulfillJson(route, 409, {
     detail: {
       code: 'pilot_check',
-      message: `${experiment.pilot_check.reason} Run the pilot check first, or acknowledge and launch anyway.`,
+      message: `${experiment.pilot_check.reason} Run the pilot check first, or acknowledge and create the draft anyway.`,
       pilot_check: experiment.pilot_check,
     },
   });
@@ -470,9 +470,7 @@ function createMockState(): MockState {
     recommendationRequests: [],
     datasetPatches: [],
     experimentCreates: [],
-    launchRequests: [],
-    launchError: null,
-    launchExcluded: [],
+    pilotPayloads: [],
     pilotCheckRuns: {},
     pilotCheckRequests: [],
     pilotCheckRunningPolls: 0,
@@ -1029,6 +1027,7 @@ async function installApiMocks(
         pilot_places: number;
         acknowledge_pilot_check?: boolean;
       };
+      state.pilotPayloads.push(payload);
       const gated = state.experiments.find((item) => item.id === experimentId);
       if (await refuseUnlessAcknowledged(route, state, gated, payload)) return;
       const pilot = buildRound(state, {
@@ -1051,32 +1050,6 @@ async function installApiMocks(
         experiment.prolific_completion_url = 'https://app.prolific.com/submissions/complete?cc=TEST1234';
       }
       await fulfillJson(route, 200, pilot);
-      return;
-    }
-
-    if (pathname.endsWith('/launch') && method === 'POST') {
-      const experimentId = extractExperimentId(url);
-      state.launchRequests.push(experimentId);
-      if (state.launchError) {
-        await fulfillJson(route, 400, { detail: state.launchError });
-        return;
-      }
-      const experiment = state.experiments.find((item) => item.id === experimentId);
-      const card = state.datasets.find((item) => item.id === experiment?.group_dataset_id);
-      const pilot = buildRound(state, {
-        round_number: 0,
-        places_requested: 5,
-        description: card?.study_blurb ?? '',
-        estimated_completion_time: card?.estimated_completion_time ?? 0,
-        reward: card?.reward ?? 0,
-      });
-      state.rounds[experimentId] = [pilot];
-      await fulfillJson(route, 200, pilot);
-      return;
-    }
-
-    if (pathname.endsWith('/launch/preview') && method === 'GET') {
-      await fulfillJson(route, 200, { excluded_experiments: state.launchExcluded });
       return;
     }
 
@@ -1552,13 +1525,11 @@ test('run pilot, close it, and launch a round from an experiment with uploaded q
   await expect(page.getByTestId('pilot-check-dialog')).toHaveCount(0);
   expect(state.launchAcknowledgements).toEqual([false]);
   await expect(page.getByTestId('publish-round-0')).toBeVisible();
-  await expect(page.getByTestId('recommendation-panel')).toContainText('Recommendation for next round');
   await expect(page.getByTestId('completion-url-input')).toContainText(
     'https://app.prolific.com/submissions/complete?cc=TEST1234'
   );
-  // Button is hidden (not just disabled) while the previous round is open,
-  // matching the pre-pilot state — we don't render mockable buttons.
-  await expect(page.getByTestId('launch-round-button')).toHaveCount(0);
+  // No next round is recommended while the previous one is still open.
+  await expect(page.getByTestId('recommendation-panel')).toHaveCount(0);
 
   await page.getByTestId('publish-round-0').click();
   await expect(page.getByTestId('close-round-0')).toBeVisible();
@@ -1566,6 +1537,7 @@ test('run pilot, close it, and launch a round from an experiment with uploaded q
 
   await page.getByTestId('close-round-0').click();
   await expect(page.getByTestId('study-rounds-list').getByText('AWAITING_REVIEW')).toBeVisible();
+  await expect(page.getByTestId('recommendation-panel')).toContainText('Recommendation for next round');
   await expect(page.getByTestId('launch-round-button')).toBeVisible();
 
   await page.getByTestId('launch-round-button').click();
@@ -2897,15 +2869,18 @@ test('round and next-round costs include Prolific\'s fee and VAT', async ({ page
     '12 completed · 3 in progress · 48 left'
   );
 
-  // Next round: 30 places at the pilot's £15.00, fee and VAT on top. Rewards
-  // alone would read £450.00.
-  await expect(page.getByTestId('recommendation-cost')).toHaveText('~£630.00');
-
   // The same figure has to be estimable before launch, so editing the round
   // breaks out rewards, fee and VAT rather than showing rewards alone.
   await page.getByTestId('edit-round-0').click();
   await expect(page.getByText(/Est\. Prolific total: £1323\.00 for 63 raters/)).toBeVisible();
   await expect(page.getByText(/£945\.00 rewards \+ £315\.00 fee \+ £63\.00 VAT/)).toBeVisible();
+
+  // Once the round closes, the next round: 30 places at the pilot's £15.00,
+  // fee and VAT on top. Rewards alone would read £450.00.
+  state.rounds[1][0].prolific_study_status = 'AWAITING_REVIEW';
+  await page.reload();
+  await page.getByTestId('tab-launch').click();
+  await expect(page.getByTestId('recommendation-cost')).toHaveText('~£630.00');
 });
 
 // Locale and timezone are pinned so the rendered timestamp is comparable.
@@ -3884,7 +3859,7 @@ test('a testing preview cannot start a pilot, and the banner says why', async ({
 
   const banner = page.getByTestId('launch-blockers');
   await expect(banner).toContainText(
-    "This study can't launch yet: this experiment is a testing preview and is missing questions.",
+    "The pilot draft can't be created yet: this experiment is a testing preview and is missing questions.",
   );
   for (const fix of fixes) {
     await expect(banner).toContainText(fix);
@@ -3991,8 +3966,8 @@ test('an experiment missing launch fields cannot start a pilot', async ({ page }
     await expect(banner).toContainText(fix);
   }
   await expect(page.getByTestId('run-pilot-button')).toBeDisabled();
-  // Ungrouped, so no dataset card and no one-click.
-  await expect(page.locator('[data-testid^="one-click"]')).toHaveCount(0);
+  // Ungrouped, so no dataset card to fill the form from.
+  await expect(page.getByTestId('pilot-card-prefill')).toHaveCount(0);
 
   // The pencil the internal-name fix points to doesn't call it optional.
   await page.getByRole('button', { name: 'Edit internal name' }).click();
@@ -4078,11 +4053,46 @@ test("a pilot's time and reward can be saved to the dataset card", async ({ page
 
   // Copied unconverted: minutes, and minor units per participant.
   await expect(page.getByTestId('card-readiness')).toHaveText(
-    'Card complete: one-click pilots can use it.',
+    'Card complete: the pilot form fills in from it.',
   );
   expect(state.datasetPatches).toEqual([{ estimated_completion_time: 20, reward: 900 }]);
   await expect(page.getByTestId('save-to-card-button')).toHaveCount(0);
   await expect(panel).toContainText('The passages card carries the same.');
+});
+
+test('the launch tab hides panels with nothing to offer', async ({ page }) => {
+  const state = createMockState();
+  seedCardExperiment(state, { ...COMPLETE_CARD, estimated_completion_time: 20, reward: 900 });
+  const pilot = buildRound(state, {
+    round_number: 0,
+    prolific_study_status: 'AWAITING_REVIEW',
+    places_requested: 5,
+    estimated_completion_time: 20,
+    reward: 900,
+  });
+  state.rounds[1] = [pilot];
+  state.recommendations[1] = {
+    avg_time_per_question_seconds: 42,
+    remaining_rating_actions: 300,
+    total_hours_remaining: 3.5,
+    recommended_places: 4,
+    is_complete: false,
+  };
+
+  await installApiMocks(page, state, { currencyCode: 'GBP', currencySymbol: '£' });
+  await page.goto('/admin/experiments/1');
+  await page.getByTestId('tab-launch').click();
+
+  // The card already carries the pilot's time and reward: nothing to save.
+  await expect(page.getByTestId('launch-round-button')).toBeVisible();
+  await expect(page.getByTestId('save-to-card-panel')).toHaveCount(0);
+
+  // A round still open: no next round to recommend yet.
+  state.rounds[1] = [pilot, buildRound(state, { round_number: 1, prolific_study_status: 'UNPUBLISHED' })];
+  await page.reload();
+  await page.getByTestId('tab-launch').click();
+  await expect(page.getByTestId('publish-round-1')).toBeVisible();
+  await expect(page.getByTestId('recommendation-panel')).toHaveCount(0);
 });
 
 test('an ungrouped experiment has no dataset card to save the pilot to', async ({ page }) => {
@@ -4150,152 +4160,156 @@ function seedCardExperiment(
   };
 }
 
-test('a complete dataset card creates the pilot draft in one click', async ({ page }) => {
+test("the pilot form starts from the dataset card and the dataset's other experiments", async ({
+  page,
+}) => {
   const state = createMockState();
-  seedCardExperiment(state, COMPLETE_CARD);
-  state.launchError = 'A pilot study has already been run for this experiment';
-  // Named by internal name where there is one; arms share the public name.
-  state.launchExcluded = [
-    { id: 7, name: 'Passage rating', internal_name: 'passages fall24 control' },
-    { id: 9, name: 'Passages fall25 top_n', internal_name: null },
-  ];
+  // Not the form's own default reward, so the card's is what shows.
+  seedCardExperiment(state, { ...COMPLETE_CARD, reward: 1250 });
+  // A sibling arm still in DRAFT, and an unfinished experiment on no dataset.
+  state.experiments.push(
+    buildExperiment(state, {
+      id: 7,
+      name: 'Passages top_n',
+      group_id: 1,
+      group_name: 'passages fall25',
+      group_dataset_id: 1,
+      group_dataset_name: 'passages',
+      wave: 'fall25',
+    }),
+    buildExperiment(state, { id: 9, name: 'Unrelated draft' }),
+  );
 
   await installApiMocks(page, state, { currencyCode: 'GBP', currencySymbol: '£' });
   await page.goto('/admin/experiments/1');
   await page.getByTestId('tab-launch').click();
 
-  const card = page.getByTestId('one-click-card');
-  await expect(card).toContainText('30 min');
-  await expect(card).toContainText('£9.00 per participant');
-  await expect(card).toContainText('Rate short passages.');
-  await expect(card).toContainText('Participants of passages fall24 control, Passages fall25 top_n');
-  // The pilot form stays as the alternative.
-  await expect(page.getByTestId('run-pilot-button')).toBeVisible();
-
-  // A refusal shows the API's own detail.
-  await page.getByTestId('one-click-launch-button').click();
-  await expect(page.getByTestId('one-click-panel')).toContainText(
-    'A pilot study has already been run for this experiment',
+  // A complete card shows as a summary; the pencil opens the form behind it.
+  await expect(page.getByTestId('pilot-card-prefill')).toHaveText(
+    "Filled in from the passages card, and set to exclude participants of the dataset's other " +
+      'experiments. Use the pencil to change anything before creating the draft.',
   );
+  const summary = page.getByTestId('pilot-summary');
+  await expect(summary).toContainText('Rate short passages.');
+  await expect(summary).toContainText('30 min');
+  await expect(summary).toContainText('£12.50 per participant');
+  await expect(summary).toContainText('Participants of Passages top_n');
+  await expect(page.getByTestId('pilot-description-input')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Edit pilot settings' }).click();
+  await expect(summary).toHaveCount(0);
 
-  state.launchError = null;
-  // A card edit and a sibling added since the panel loaded reach the confirm.
-  state.datasets[0] = { ...state.datasets[0], estimated_completion_time: 25, reward: 1000 };
-  state.launchExcluded = [
-    ...state.launchExcluded,
-    { id: 11, name: 'Passage rating', internal_name: 'passages fall25 decomp' },
-  ];
-  page.removeAllListeners('dialog');
-  let confirmMessage = '';
-  page.once('dialog', async (dialog) => {
-    confirmMessage = dialog.message();
-    await dialog.accept();
-  });
-  await page.getByTestId('one-click-launch-button').click();
+  await expect(page.getByTestId('pilot-card-prefill')).toContainText(
+    'Edit anything before creating the draft.',
+  );
+  await expect(page.getByTestId('pilot-description-input')).toHaveValue('Rate short passages.');
+  await expect(page.getByTestId('pilot-description-source')).toHaveText(
+    "Filled in from the passages card's Prolific listing description.",
+  );
+  await expect(page.getByTestId('pilot-estimated-completion-time-input')).toHaveValue('30');
+  await expect(page.getByTestId('pilot-reward-input')).toHaveValue('12.50');
 
+  // The sibling starts selected though it isn't finished, and can be taken off
+  // and put back. The unrelated draft can't be picked at all.
+  const sibling = page.getByTestId('pilot-exclusion-option-7');
+  await expect(sibling).toBeChecked();
+  await expect(page.getByText("Can't re-add until finished")).toHaveCount(0);
+  await expect(page.getByTestId('pilot-exclusion-option-9')).toHaveCount(0);
+  await sibling.uncheck();
+  await sibling.check();
+
+  await page.getByTestId('run-pilot-button').click();
   await expect(page.getByTestId('study-rounds-list')).toBeVisible();
-  expect(confirmMessage).toBe(
-    'Create a pilot draft from the passages card: 25 min, £10.00 per participant?\n' +
-      'It excludes participants of: passages fall24 control, Passages fall25 top_n, ' +
-      'passages fall25 decomp.\n' +
-      'You can still edit the draft before publishing.',
-  );
-  await expect(page.getByTestId('one-click-panel')).toHaveCount(0);
-  expect(state.launchRequests).toEqual([1, 1]);
+  expect(state.pilotPayloads).toHaveLength(1);
+  expect(state.pilotPayloads[0]).toMatchObject({
+    description: 'Rate short passages.',
+    estimated_completion_time: 30,
+    reward: 1250,
+    pilot_places: 5,
+    excluded_experiment_ids: [7],
+  });
 });
 
-test('cancelling the one-click confirm sends no launch request', async ({ page }) => {
+test('a complete dataset card creates the pilot draft straight from the summary', async ({
+  page,
+}) => {
   const state = createMockState();
-  seedCardExperiment(state, COMPLETE_CARD);
-
-  await installApiMocks(page, state, { currencyCode: 'GBP', currencySymbol: '£' });
-  const launchPosts: string[] = [];
-  page.on('request', (request) => {
-    if (request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/launch')) {
-      launchPosts.push(request.url());
-    }
-  });
-  await page.goto('/admin/experiments/1');
-  await page.getByTestId('tab-launch').click();
-  await expect(page.getByTestId('one-click-card')).toContainText(
-    'Nobody: the dataset has no other grouped experiments',
-  );
-
-  page.removeAllListeners('dialog');
-  let confirmMessage = '';
-  page.once('dialog', async (dialog) => {
-    confirmMessage = dialog.message();
-    await dialog.dismiss();
-  });
-  await page.getByTestId('one-click-launch-button').click();
-
-  await expect.poll(() => confirmMessage).toContain('so it excludes nobody.');
-  await expect(page.getByTestId('one-click-launch-button')).toBeEnabled();
-  await expect(page.getByTestId('one-click-panel')).toBeVisible();
-  expect(launchPosts).toEqual([]);
-  expect(state.launchRequests).toEqual([]);
-});
-
-test('a one-click draft whose refresh fails offers no second launch', async ({ page }) => {
-  const state = createMockState();
-  seedCardExperiment(state, COMPLETE_CARD);
+  seedCardExperiment(state, { ...COMPLETE_CARD, reward: 1250 });
 
   await installApiMocks(page, state, { currencyCode: 'GBP', currencySymbol: '£' });
   await page.goto('/admin/experiments/1');
   await page.getByTestId('tab-launch').click();
-  await expect(page.getByTestId('one-click-card')).toBeVisible();
 
-  // The launch succeeds, but the rounds reload that would show its draft fails.
-  await page.route('**/api/admin/experiments/1/prolific/rounds', async (route) => {
-    if (route.request().method() !== 'GET') return route.fallback();
-    await fulfillJson(route, 500, { detail: 'Round history unavailable' });
+  await expect(page.getByTestId('pilot-summary')).toContainText(
+    'Nobody: the dataset has no other experiments',
+  );
+  await page.getByTestId('run-pilot-button').click();
+  await expect(page.getByTestId('study-rounds-list')).toBeVisible();
+  expect(state.pilotPayloads[0]).toMatchObject({
+    description: 'Rate short passages.',
+    estimated_completion_time: 30,
+    reward: 1250,
+    pilot_places: 5,
+    excluded_experiment_ids: [],
   });
-  await page.getByTestId('one-click-launch-button').click();
-
-  await expect(page.getByTestId('one-click-created')).toHaveText(
-    'Pilot draft created — reload to see it.',
-  );
-  await expect(page.getByTestId('one-click-launch-button')).toBeDisabled();
-  await expect(page.getByTestId('one-click-launch-button')).toHaveText(
-    'Create pilot draft from the card',
-  );
-  await expect(page.getByTestId('one-click-panel').getByRole('alert')).toHaveCount(0);
-  expect(state.launchRequests).toEqual([1]);
 });
 
-test('an incomplete dataset card names what it lacks and offers no one-click', async ({ page }) => {
+test('the summary takes the card reward when the workspace currency is unknown', async ({
+  page,
+}) => {
+  const state = createMockState();
+  seedCardExperiment(state, { ...COMPLETE_CARD, reward: 1250 });
+
+  await installApiMocks(page, state);
+  await page.goto('/admin/experiments/1');
+  await page.getByTestId('tab-launch').click();
+
+  await expect(page.getByTestId('pilot-summary')).toContainText('12.50 per participant');
+  await page.getByTestId('run-pilot-button').click();
+  await expect(page.getByTestId('study-rounds-list')).toBeVisible();
+  expect(state.pilotPayloads[0]).toMatchObject({ reward: 1250 });
+});
+
+test('a reward typed before the card loads is kept', async ({ page }) => {
+  const state = createMockState();
+  seedCardExperiment(state, { ...COMPLETE_CARD, reward: 1250 });
+
+  await installApiMocks(page, state, { currencyCode: 'GBP', currencySymbol: '£' });
+  // Hold the card back until the reward has been typed.
+  let releaseCard = () => {};
+  const cardHeld = new Promise<void>((resolve) => {
+    releaseCard = resolve;
+  });
+  await page.route('**/api/admin/datasets/1', async (route) => {
+    await cardHeld;
+    await route.fallback();
+  });
+  await page.goto('/admin/experiments/1');
+  await page.getByTestId('tab-launch').click();
+
+  await page.getByTestId('pilot-reward-input').fill('7.00');
+  releaseCard();
+
+  await expect(page.getByTestId('pilot-card-prefill')).toBeVisible();
+  await expect(page.getByTestId('pilot-estimated-completion-time-input')).toHaveValue('30');
+  await expect(page.getByTestId('pilot-reward-input')).toHaveValue('7.00');
+});
+
+test('an incomplete dataset card fills in what it has and names what it lacks', async ({ page }) => {
   const state = createMockState();
   seedCardExperiment(state, { ...COMPLETE_CARD, estimated_completion_time: null, reward: null });
 
-  await installApiMocks(page, state);
+  await installApiMocks(page, state, { currencyCode: 'GBP', currencySymbol: '£' });
   await page.goto('/admin/experiments/1');
   await page.getByTestId('tab-launch').click();
 
-  await expect(page.getByTestId('one-click-incomplete')).toHaveText(
-    "One-click launch needs a complete passages card; it's missing estimated completion time, " +
-      'reward. Use the pilot form below.',
+  await expect(page.getByTestId('pilot-card-prefill')).toContainText(
+    'The card has no estimated completion time or reward yet, so check those.',
   );
-  await expect(page.getByTestId('one-click-launch-button')).toHaveCount(0);
+  await expect(page.getByTestId('pilot-description-input')).toHaveValue('Rate short passages.');
+  // The form's own defaults stand in for what the card lacks.
+  await expect(page.getByTestId('pilot-estimated-completion-time-input')).toHaveValue('60');
+  await expect(page.getByTestId('pilot-reward-input')).toHaveValue('9.00');
   await expect(page.getByTestId('run-pilot-button')).toBeEnabled();
-});
-
-test('launch blockers disable the one-click pilot', async ({ page }) => {
-  const state = createMockState();
-  seedCardExperiment(state, COMPLETE_CARD, {
-    launch_ready: false,
-    launch_blockers: ['rater instructions', 'internal study name'],
-    launch_blocker_summary: 'this experiment is missing rater instructions, internal study name',
-  });
-
-  await installApiMocks(page, state);
-  await page.goto('/admin/experiments/1');
-  await page.getByTestId('tab-launch').click();
-
-  await expect(page.getByTestId('one-click-blockers')).toContainText(
-    'missing rater instructions, internal study name',
-  );
-  await expect(page.getByTestId('one-click-launch-button')).toBeDisabled();
-  await expect(page.getByTestId('launch-blockers')).toBeVisible();
 });
 
 test('the dataset card editor saves what changed and shows whether the card is complete', async ({
@@ -4318,7 +4332,7 @@ test('the dataset card editor saves what changed and shows whether the card is c
   await page.getByTestId('group-card-edit-1').click();
   const editor = page.getByTestId('dataset-card-editor');
   await expect(editor.getByTestId('card-complete')).toHaveText(
-    'Card incomplete: missing internal study name, study blurb.',
+    'Card incomplete: missing internal study name, Prolific listing description.',
   );
   // Minor units per participant, entered as the pilot form's reward is.
   await expect(editor.getByTestId('card-reward-input')).toHaveValue('9.00');
@@ -4336,7 +4350,7 @@ test('the dataset card editor saves what changed and shows whether the card is c
   await editor.getByTestId('card-save-button').click();
 
   await expect(editor.getByTestId('card-complete')).toHaveText(
-    'Card complete: one-click pilots can use it.',
+    'Card complete: the pilot form fills in from it.',
   );
   // Only what changed is sent, and a cleared field is an explicit null.
   expect(state.datasetPatches).toEqual([
@@ -4866,6 +4880,11 @@ test('the launch tab nags about an unrun pilot check and shows a run as it lands
 
   const card = page.getByTestId('pilot-check-card');
   await expect(card.getByTestId('pilot-check-state')).toHaveText('Not run');
+  // The card starts collapsed to its title, state and reason; the title opens it.
+  const toggle = card.getByTestId('pilot-check-toggle');
+  await expect(toggle).toContainText('The pilot check has not been run.');
+  await expect(card.getByTestId('run-pilot-check-button')).toHaveCount(0);
+  await toggle.click();
   await expect(card.getByTestId('pilot-check-banner')).toContainText(
     'Launching will ask you to acknowledge this.',
   );
@@ -4940,6 +4959,7 @@ test('a run that started on its own and landed before the Launch tab opened sett
   await page.getByTestId('tab-launch').click();
   const card = page.getByTestId('pilot-check-card');
   await expect(card.getByTestId('pilot-check-state')).toHaveText('Warnings');
+  await card.getByTestId('pilot-check-toggle').click();
   await expect(card.getByTestId('run-pilot-check-button')).toHaveText('Re-run check');
   await expect(card.getByTestId('pilot-check-findings')).toContainText('Consent statement');
 });
@@ -4955,7 +4975,7 @@ test('creating a pilot without a clean pilot check asks before launching anyway'
 
   // The 409's own sentence; "run the check first" backs out without launching.
   const dialog = page.getByTestId('pilot-check-dialog');
-  await expect(dialog).toContainText('Launch without a clean pilot check?');
+  await expect(dialog).toContainText('Create the draft without a clean pilot check?');
   await expect(dialog).toContainText('The pilot check has not been run.');
   await dialog.getByRole('button', { name: 'Run the check first' }).click();
   await expect(dialog).toHaveCount(0);
@@ -4965,7 +4985,7 @@ test('creating a pilot without a clean pilot check asks before launching anyway'
   // Trying again and launching anyway sends a second request carrying the
   // acknowledgement.
   await page.getByTestId('run-pilot-button').click();
-  await dialog.getByRole('button', { name: 'Launch anyway' }).click();
+  await dialog.getByRole('button', { name: 'Create draft anyway' }).click();
   await expect(page.getByText('Pilot Round', { exact: true })).toBeVisible();
   expect(state.launchAcknowledgements).toEqual([false, false, true]);
   expect(state.rounds[1]).toHaveLength(1);

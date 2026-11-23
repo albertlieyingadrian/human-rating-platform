@@ -9,8 +9,8 @@ import { describeSummary } from './PilotCheckCard';
  *
  * Every study-creating call goes through `attempt`. When the backend answers
  * with the pilot check's 409, the refusal is shown in a dialog built from the
- * 409's own body, so the UI and the API cannot disagree about why. "Launch
- * anyway" repeats the call with the acknowledgement flag; the check can ask,
+ * 409's own body, so the UI and the API cannot disagree about why. "Create
+ * draft anyway" repeats the call with the acknowledgement flag; the check can ask,
  * never refuse. Any other error is rethrown to the caller.
  */
 
@@ -59,13 +59,13 @@ export function usePilotCheckGate() {
   const dialog = pending ? (
     <div data-testid="pilot-check-dialog">
       <ConfirmDialog
-        title="Launch without a clean pilot check?"
+        title="Create the draft without a clean pilot check?"
         message={
           <>
             <div>{describeSummary(pending.refusal.pilot_check)}</div>
             <div style={{ marginTop: 8 }}>
-              Run the pilot check from the card above first, or launch anyway. You will not be
-              asked again for this run unless the experiment changes.
+              Run the pilot check from the card above first, or create the draft anyway. You will
+              not be asked again for this run unless the experiment changes.
             </div>
             {retryError && (
               <div role="alert" style={{ marginTop: 8, color: 'var(--danger)' }}>
@@ -74,7 +74,7 @@ export function usePilotCheckGate() {
             )}
           </>
         }
-        confirmLabel="Launch anyway"
+        confirmLabel="Create draft anyway"
         cancelLabel="Run the check first"
         tone="danger"
         busy={busy}

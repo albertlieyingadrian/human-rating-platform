@@ -313,10 +313,12 @@ export function SectionCard({
   header,
   children,
   padded = true,
+  collapsed = false,
 }: {
   header?: React.ReactNode;
   children: React.ReactNode;
   padded?: boolean;
+  collapsed?: boolean;
 }) {
   return (
     <section
@@ -332,7 +334,7 @@ export function SectionCard({
         <div
           style={{
             padding: '16px 22px',
-            borderBottom: '1px solid var(--line)',
+            borderBottom: collapsed ? 'none' : '1px solid var(--line)',
             font: '600 11px/1 var(--font-mono)',
             letterSpacing: '0.16em',
             textTransform: 'uppercase',
@@ -342,7 +344,7 @@ export function SectionCard({
           {header}
         </div>
       )}
-      <div style={{ padding: padded ? 22 : 0 }}>{children}</div>
+      {!collapsed && <div style={{ padding: padded ? 22 : 0 }}>{children}</div>}
     </section>
   );
 }
@@ -458,6 +460,7 @@ export const dangerButton: React.CSSProperties = {
 
 /** A dataset card field name as UI copy: `estimated_completion_time` → `estimated completion time`. */
 export function fieldLabel(field: string): string {
+  if (field === 'study_blurb') return 'Prolific listing description';
   return field.replace(/_/g, ' ');
 }
 
@@ -474,6 +477,14 @@ export const STUDY_LABELS: [StudyLabel, string][] = [
 /** The screeners a pilot uses unless told otherwise (PilotStudyCreate's default). */
 export const DEFAULT_SCREENERS: Screener[] = ['ai_taskers', 'fact_checkers', 'approval_rate'];
 
+export const SCREENER_ITEMS: [Screener, string, string][] = [
+  ['ai_taskers', 'Qualified AI Taskers', 'Participants Prolific has vetted for AI tasks (labelling, evaluation, red-teaming).'],
+  ['fact_checkers', 'Fact Checkers', "Prolific's Fact Checkers expert network."],
+  ['approval_rate', 'High approval rate (≥80%)', '80%+ approval rate on past Prolific submissions.'],
+  ['harmful_content', 'Comfortable with harmful content', "Prolific's Harmful Content prescreener; required for sensitive or explicit studies."],
+  ['deception', 'Comfortable with deception', "Prolific's Deception prescreener; required for studies that mislead raters."],
+];
+
 export function ScreenerCheckboxes({
   value,
   onChange,
@@ -489,13 +500,6 @@ export function ScreenerCheckboxes({
   studyFlags?: StudyFlag[];
 }) {
   const forced = forcedScreeners(studyFlags);
-  const items: [Screener, string, string][] = [
-    ['ai_taskers', 'Qualified AI Taskers', 'Participants Prolific has vetted for AI tasks (labelling, evaluation, red-teaming).'],
-    ['fact_checkers', 'Fact Checkers', "Prolific's Fact Checkers expert network."],
-    ['approval_rate', 'High approval rate (≥80%)', '80%+ approval rate on past Prolific submissions.'],
-    ['harmful_content', 'Comfortable with harmful content', "Prolific's Harmful Content prescreener; required for sensitive or explicit studies."],
-    ['deception', 'Comfortable with deception', "Prolific's Deception prescreener; required for studies that mislead raters."],
-  ];
   return (
     <div
       style={{
@@ -508,7 +512,7 @@ export function ScreenerCheckboxes({
         background: 'var(--surface-2)',
       }}
     >
-      {items.map(([key, label, hint]) => {
+      {SCREENER_ITEMS.map(([key, label, hint]) => {
         const isForced = forced.includes(key);
         const checked = isForced || value.includes(key);
         return (

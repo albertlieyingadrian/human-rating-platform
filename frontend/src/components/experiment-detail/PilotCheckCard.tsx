@@ -74,6 +74,7 @@ export function PilotCheckCard({
   const [error, setError] = useState<string | null>(null);
   // Bumped when this card starts a run, so the poll below picks it up.
   const [started, setStarted] = useState(0);
+  const [open, setOpen] = useState(false);
 
   const state: PilotCheckState = summary?.state ?? 'not_run';
   // An upload or an edit can start a run on its own; the refreshed summary
@@ -136,11 +137,58 @@ export function PilotCheckCard({
   return (
     <div data-testid="pilot-check-card">
       <SectionCard
+        collapsed={!open}
         header={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button
+            type="button"
+            data-testid="pilot-check-toggle"
+            aria-expanded={open}
+            onClick={() => setOpen((value) => !value)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              width: '100%',
+              margin: '-8px 0',
+              padding: '8px 0',
+              border: 'none',
+              background: 'none',
+              font: 'inherit',
+              letterSpacing: 'inherit',
+              textTransform: 'inherit',
+              color: 'inherit',
+              textAlign: 'left',
+              cursor: 'pointer',
+            }}
+          >
             <span>Pilot check</span>
             <StatePill state={state} />
-          </div>
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                font: '400 13px/1.3 var(--font-body)',
+                letterSpacing: 'normal',
+                textTransform: 'none',
+              }}
+            >
+              {!open && state !== 'passed' && describeSummary(summary)}
+            </span>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+              style={{ flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none' }}
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </button>
         }
       >
         <p style={{ fontSize: 13.5, color: 'var(--muted)', margin: '0 0 12px' }}>

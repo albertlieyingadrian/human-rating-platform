@@ -63,7 +63,7 @@ async def gate_for(
             detail={
                 "code": "pilot_check",
                 "message": f"{summary.reason} Run the pilot check first, or acknowledge "
-                "and launch anyway.",
+                "and create the draft anyway.",
                 "pilot_check": summary.model_dump(mode="json"),
             },
         )
