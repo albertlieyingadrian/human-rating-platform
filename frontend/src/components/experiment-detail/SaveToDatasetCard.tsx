@@ -30,6 +30,7 @@ export function SaveToDatasetCard({
 }) {
   const [card, setCard] = useState<Dataset | null>(null);
   const [saving, setSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -77,6 +78,7 @@ export function SaveToDatasetCard({
     try {
       // The PATCH answers with the card as stored, readiness included.
       setCard(await api.updateDatasetCard(datasetId, { estimated_completion_time: time, reward }));
+      setJustSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save to the dataset card');
     } finally {
@@ -85,6 +87,8 @@ export function SaveToDatasetCard({
   };
 
   const saved = card !== null && card.estimated_completion_time === time && card.reward === reward;
+  // Nothing to offer when the card already matches, unless this panel just saved it.
+  if (!error && (card === null || (saved && !justSaved))) return null;
 
   return (
     <div data-testid="save-to-card-panel">

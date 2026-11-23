@@ -1525,13 +1525,11 @@ test('run pilot, close it, and launch a round from an experiment with uploaded q
   await expect(page.getByTestId('pilot-check-dialog')).toHaveCount(0);
   expect(state.launchAcknowledgements).toEqual([false]);
   await expect(page.getByTestId('publish-round-0')).toBeVisible();
-  await expect(page.getByTestId('recommendation-panel')).toContainText('Recommendation for next round');
   await expect(page.getByTestId('completion-url-input')).toContainText(
     'https://app.prolific.com/submissions/complete?cc=TEST1234'
   );
-  // Button is hidden (not just disabled) while the previous round is open,
-  // matching the pre-pilot state — we don't render mockable buttons.
-  await expect(page.getByTestId('launch-round-button')).toHaveCount(0);
+  // No next round is recommended while the previous one is still open.
+  await expect(page.getByTestId('recommendation-panel')).toHaveCount(0);
 
   await page.getByTestId('publish-round-0').click();
   await expect(page.getByTestId('close-round-0')).toBeVisible();
@@ -1539,6 +1537,7 @@ test('run pilot, close it, and launch a round from an experiment with uploaded q
 
   await page.getByTestId('close-round-0').click();
   await expect(page.getByTestId('study-rounds-list').getByText('AWAITING_REVIEW')).toBeVisible();
+  await expect(page.getByTestId('recommendation-panel')).toContainText('Recommendation for next round');
   await expect(page.getByTestId('launch-round-button')).toBeVisible();
 
   await page.getByTestId('launch-round-button').click();
@@ -2870,15 +2869,18 @@ test('round and next-round costs include Prolific\'s fee and VAT', async ({ page
     '12 completed · 3 in progress · 48 left'
   );
 
-  // Next round: 30 places at the pilot's £15.00, fee and VAT on top. Rewards
-  // alone would read £450.00.
-  await expect(page.getByTestId('recommendation-cost')).toHaveText('~£630.00');
-
   // The same figure has to be estimable before launch, so editing the round
   // breaks out rewards, fee and VAT rather than showing rewards alone.
   await page.getByTestId('edit-round-0').click();
   await expect(page.getByText(/Est\. Prolific total: £1323\.00 for 63 raters/)).toBeVisible();
   await expect(page.getByText(/£945\.00 rewards \+ £315\.00 fee \+ £63\.00 VAT/)).toBeVisible();
+
+  // Once the round closes, the next round: 30 places at the pilot's £15.00,
+  // fee and VAT on top. Rewards alone would read £450.00.
+  state.rounds[1][0].prolific_study_status = 'AWAITING_REVIEW';
+  await page.reload();
+  await page.getByTestId('tab-launch').click();
+  await expect(page.getByTestId('recommendation-cost')).toHaveText('~£630.00');
 });
 
 // Locale and timezone are pinned so the rendered timestamp is comparable.
@@ -4058,6 +4060,41 @@ test("a pilot's time and reward can be saved to the dataset card", async ({ page
   await expect(panel).toContainText('The passages card carries the same.');
 });
 
+test('the launch tab hides panels with nothing to offer', async ({ page }) => {
+  const state = createMockState();
+  seedCardExperiment(state, { ...COMPLETE_CARD, estimated_completion_time: 20, reward: 900 });
+  const pilot = buildRound(state, {
+    round_number: 0,
+    prolific_study_status: 'AWAITING_REVIEW',
+    places_requested: 5,
+    estimated_completion_time: 20,
+    reward: 900,
+  });
+  state.rounds[1] = [pilot];
+  state.recommendations[1] = {
+    avg_time_per_question_seconds: 42,
+    remaining_rating_actions: 300,
+    total_hours_remaining: 3.5,
+    recommended_places: 4,
+    is_complete: false,
+  };
+
+  await installApiMocks(page, state, { currencyCode: 'GBP', currencySymbol: '£' });
+  await page.goto('/admin/experiments/1');
+  await page.getByTestId('tab-launch').click();
+
+  // The card already carries the pilot's time and reward: nothing to save.
+  await expect(page.getByTestId('launch-round-button')).toBeVisible();
+  await expect(page.getByTestId('save-to-card-panel')).toHaveCount(0);
+
+  // A round still open: no next round to recommend yet.
+  state.rounds[1] = [pilot, buildRound(state, { round_number: 1, prolific_study_status: 'UNPUBLISHED' })];
+  await page.reload();
+  await page.getByTestId('tab-launch').click();
+  await expect(page.getByTestId('publish-round-1')).toBeVisible();
+  await expect(page.getByTestId('recommendation-panel')).toHaveCount(0);
+});
+
 test('an ungrouped experiment has no dataset card to save the pilot to', async ({ page }) => {
   const state = createMockState();
   state.experiments = [buildExperiment(state, { id: 1, name: 'Loose Experiment', question_count: 2 })];
@@ -4147,9 +4184,22 @@ test("the pilot form starts from the dataset card and the dataset's other experi
   await page.goto('/admin/experiments/1');
   await page.getByTestId('tab-launch').click();
 
+  // A complete card shows as a summary; the pencil opens the form behind it.
   await expect(page.getByTestId('pilot-card-prefill')).toHaveText(
     "Filled in from the passages card, and set to exclude participants of the dataset's other " +
-      'experiments. Edit anything before creating the draft.',
+      'experiments. Use the pencil to change anything before creating the draft.',
+  );
+  const summary = page.getByTestId('pilot-summary');
+  await expect(summary).toContainText('Rate short passages.');
+  await expect(summary).toContainText('30 min');
+  await expect(summary).toContainText('£12.50 per participant');
+  await expect(summary).toContainText('Participants of Passages top_n');
+  await expect(page.getByTestId('pilot-description-input')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Edit pilot settings' }).click();
+  await expect(summary).toHaveCount(0);
+
+  await expect(page.getByTestId('pilot-card-prefill')).toContainText(
+    'Edit anything before creating the draft.',
   );
   await expect(page.getByTestId('pilot-description-input')).toHaveValue('Rate short passages.');
   await expect(page.getByTestId('pilot-description-source')).toHaveText(
@@ -4176,6 +4226,30 @@ test("the pilot form starts from the dataset card and the dataset's other experi
     reward: 1250,
     pilot_places: 5,
     excluded_experiment_ids: [7],
+  });
+});
+
+test('a complete dataset card creates the pilot draft straight from the summary', async ({
+  page,
+}) => {
+  const state = createMockState();
+  seedCardExperiment(state, { ...COMPLETE_CARD, reward: 1250 });
+
+  await installApiMocks(page, state, { currencyCode: 'GBP', currencySymbol: '£' });
+  await page.goto('/admin/experiments/1');
+  await page.getByTestId('tab-launch').click();
+
+  await expect(page.getByTestId('pilot-summary')).toContainText(
+    'Nobody: the dataset has no other experiments',
+  );
+  await page.getByTestId('run-pilot-button').click();
+  await expect(page.getByTestId('study-rounds-list')).toBeVisible();
+  expect(state.pilotPayloads[0]).toMatchObject({
+    description: 'Rate short passages.',
+    estimated_completion_time: 30,
+    reward: 1250,
+    pilot_places: 5,
+    excluded_experiment_ids: [],
   });
 });
 
@@ -4790,6 +4864,11 @@ test('the launch tab nags about an unrun pilot check and shows a run as it lands
 
   const card = page.getByTestId('pilot-check-card');
   await expect(card.getByTestId('pilot-check-state')).toHaveText('Not run');
+  // The card starts collapsed to its title, state and reason; the title opens it.
+  const toggle = card.getByTestId('pilot-check-toggle');
+  await expect(toggle).toContainText('The pilot check has not been run.');
+  await expect(card.getByTestId('run-pilot-check-button')).toHaveCount(0);
+  await toggle.click();
   await expect(card.getByTestId('pilot-check-banner')).toContainText(
     'Launching will ask you to acknowledge this.',
   );
@@ -4864,6 +4943,7 @@ test('a run that started on its own and landed before the Launch tab opened sett
   await page.getByTestId('tab-launch').click();
   const card = page.getByTestId('pilot-check-card');
   await expect(card.getByTestId('pilot-check-state')).toHaveText('Warnings');
+  await card.getByTestId('pilot-check-toggle').click();
   await expect(card.getByTestId('run-pilot-check-button')).toHaveText('Re-run check');
   await expect(card.getByTestId('pilot-check-findings')).toContainText('Consent statement');
 });

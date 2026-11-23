@@ -19,6 +19,7 @@ import type {
   Upload,
   UploadMetaKey,
 } from '../types';
+import { forcedScreeners } from '../types';
 import { ExperimentExclusionPicker } from './experiment-detail/ExclusionPicker';
 import { SaveToDatasetCard } from './experiment-detail/SaveToDatasetCard';
 import { testingPreviewFix } from './experiment-detail/launchBlockers';
@@ -39,6 +40,7 @@ import {
   DEFAULT_SCREENERS,
   Field,
   ProgressBar,
+  SCREENER_ITEMS,
   STUDY_LABELS,
   ScreenerCheckboxes,
   SectionCard,
@@ -1042,9 +1044,6 @@ function ExperimentDetail({
     ? ['AWAITING_REVIEW', 'COMPLETED'].includes(latestRound.prolific_study_status)
     : false;
   const nextRoundNumber = latestRound ? latestRound.round_number + 1 : 1;
-  const roundLaunchBlockedMessage = !latestRoundClosed && latestRound
-    ? `Waiting for ${latestRound.round_number === 0 ? 'the pilot round' : `Round ${latestRound.round_number}`} to close. Current status: ${latestRound.prolific_study_status}.`
-    : null;
   const isLocked = experiment.status !== 'DRAFT';
   const isFinished = experiment.status === 'FINISHED';
   const canFinish = useMemo(
@@ -1503,7 +1502,6 @@ function ExperimentDetail({
             recommendation={recommendation}
             latestRoundClosed={latestRoundClosed}
             nextRoundNumber={nextRoundNumber}
-            roundLaunchBlockedMessage={roundLaunchBlockedMessage}
             editingRoundId={editingRoundId}
             editForm={editForm}
             editRewardInput={editRewardInput}
@@ -2805,7 +2803,6 @@ function LaunchPanel(props: {
   recommendation: RecommendationResponse | null;
   latestRoundClosed: boolean;
   nextRoundNumber: number;
-  roundLaunchBlockedMessage: string | null;
   editingRoundId: number | null;
   editForm: {
     description: string;
@@ -2852,7 +2849,6 @@ function LaunchPanel(props: {
     recommendation,
     latestRoundClosed,
     nextRoundNumber,
-    roundLaunchBlockedMessage,
     editingRoundId,
     editForm,
     editRewardInput,
@@ -3025,7 +3021,6 @@ function LaunchPanel(props: {
                   recommendation={recommendation}
                   nextRoundNumber={nextRoundNumber}
                   latestRoundClosed={latestRoundClosed}
-                  roundLaunchBlockedMessage={roundLaunchBlockedMessage}
                   launchBlocked={testingPreview !== null}
                   onRunRound={onRunRound}
                   roundReward={rounds.length > 0 ? rounds[0].reward : null}
@@ -3533,7 +3528,6 @@ function RecommendationCard({
   recommendation,
   nextRoundNumber,
   latestRoundClosed,
-  roundLaunchBlockedMessage,
   launchBlocked,
   onRunRound,
   roundReward,
@@ -3544,7 +3538,6 @@ function RecommendationCard({
   recommendation: RecommendationResponse;
   nextRoundNumber: number;
   latestRoundClosed: boolean;
-  roundLaunchBlockedMessage: string | null;
   /** A testing preview: the API refuses a new round, so the button is off. */
   launchBlocked: boolean;
   onRunRound: () => void;
@@ -3561,6 +3554,8 @@ function RecommendationCard({
       </Banner>
     );
   }
+  // The next round can't start until the open one closes, so there is nothing to offer yet.
+  if (!latestRoundClosed) return null;
   return (
     <div data-testid="recommendation-panel">
     <SectionCard header="Recommendation for next round">
@@ -3591,25 +3586,17 @@ function RecommendationCard({
           </>
         )}
       </div>
-      {latestRoundClosed ? (
-        <button
-          data-testid="launch-round-button"
-          onClick={onRunRound}
-          disabled={launchBlocked}
-          style={{
-            ...primaryButton,
-            ...(launchBlocked ? { opacity: 0.5, cursor: 'not-allowed' } : {}),
-          }}
-        >
-          Create Round {nextRoundNumber} Draft ({recommendation.recommended_places} places)
-        </button>
-      ) : (
-        roundLaunchBlockedMessage && (
-          <div style={{ color: 'var(--muted)', fontSize: 13, lineHeight: 1.55 }}>
-            {roundLaunchBlockedMessage}
-          </div>
-        )
-      )}
+      <button
+        data-testid="launch-round-button"
+        onClick={onRunRound}
+        disabled={launchBlocked}
+        style={{
+          ...primaryButton,
+          ...(launchBlocked ? { opacity: 0.5, cursor: 'not-allowed' } : {}),
+        }}
+      >
+        Create Round {nextRoundNumber} Draft ({recommendation.recommended_places} places)
+      </button>
     </SectionCard>
     </div>
   );
@@ -3665,8 +3652,42 @@ function PilotForm(props: {
         (field) => !card[field],
       )
     : [];
+  // A card with nothing missing shows as a summary; the pencil, or any edit
+  // already under way, opens the full form.
+  const [editing, setEditing] = useState(false);
+  const summarised =
+    !editing &&
+    !!card &&
+    cardGaps.length === 0 &&
+    pilotForm.description.trim() !== '' &&
+    pilotForm.estimated_completion_time <= sessionDurationMinutes;
+  const screenerKeys = new Set([...pilotForm.screeners, ...forcedScreeners(props.studyFlags)]);
+  const screenerNames = SCREENER_ITEMS.filter(([key]) => screenerKeys.has(key)).map(
+    ([, name]) => name,
+  );
+  const excludedNames = pilotForm.excluded_experiment_ids
+    .map((id) => otherExperiments.find((e) => e.id === id))
+    .map((e) => e?.internal_name || e?.name)
+    .filter(Boolean);
+  const summaryRow = (label: string, value: React.ReactNode) => (
+    <div style={{ display: 'flex', gap: 12, fontSize: 13.5, lineHeight: 1.55 }}>
+      <span style={{ width: 150, flexShrink: 0, color: 'var(--muted)' }}>{label}</span>
+      <span style={{ minWidth: 0, color: 'var(--ink)', whiteSpace: 'pre-wrap' }}>{value}</span>
+    </div>
+  );
   return (
-    <SectionCard header="Pilot round">
+    <SectionCard
+      header={
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          Pilot round
+          {summarised && (
+            <span style={{ margin: '-8px 0' }}>
+              <PencilButton onClick={() => setEditing(true)} label="Edit pilot settings" />
+            </span>
+          )}
+        </div>
+      }
+    >
       <p style={{ fontSize: 13.5, color: 'var(--muted)', margin: '0 0 16px' }}>
         This creates a draft study on Prolific with the configuration later rounds reuse. No
         participant sees it until you publish the draft. Pilot timing data drives the recommended
@@ -3678,12 +3699,50 @@ function PilotForm(props: {
           style={{ fontSize: 13.5, color: 'var(--accent-soft-ink)', margin: '0 0 16px' }}
         >
           Filled in from the {datasetName} card, and set to exclude participants of the dataset's
-          other experiments. Edit anything before creating the draft.
+          other experiments. {summarised ? 'Use the pencil to change anything' : 'Edit anything'}{' '}
+          before creating the draft.
           {cardGaps.length > 0 &&
             ` The card has no ${cardGaps.map(fieldLabel).join(' or ')} yet, so check those.`}
         </p>
       )}
       <form onSubmit={onSubmit}>
+        {summarised ? (
+          <div data-testid="pilot-summary" style={{ display: 'grid', gap: 6, marginBottom: 16 }}>
+              {summaryRow('Prolific listing', pilotForm.description)}
+              {summaryRow('Completion time', `${pilotForm.estimated_completion_time} min`)}
+              {summaryRow(
+                'Reward',
+                <>
+                  {currencySymbol}
+                  {pilotRewardInput} per participant
+                  <div style={{ color: 'var(--muted)', fontSize: 12.5 }}>
+                    {rewardHintText(
+                      pilotRewardInput,
+                      currencyCode,
+                      currencySymbol,
+                      pilotForm.estimated_completion_time,
+                      pilotForm.pilot_places,
+                      pricing,
+                    )}
+                  </div>
+                </>,
+              )}
+              {summaryRow('Raters', pilotForm.pilot_places)}
+              {summaryRow(
+                'Study label',
+                STUDY_LABELS.find(([value]) => value === pilotForm.study_label)?.[1] ??
+                  pilotForm.study_label,
+              )}
+              {summaryRow('Pre-screeners', screenerNames.join(', ') || 'None')}
+              {summaryRow(
+                'Excludes',
+                excludedNames.length > 0
+                  ? `Participants of ${excludedNames.join(', ')}`
+                  : 'Nobody: the dataset has no other experiments',
+              )}
+          </div>
+        ) : (
+        <div onChange={() => setEditing(true)}>
         <Field
           id="pilot-description"
           label="Prolific listing description"
@@ -3879,6 +3938,8 @@ function PilotForm(props: {
             style={inputStyle}
           />
         </Field>
+        </div>
+        )}
         {launchBlockers.length > 0 && (
           <div data-testid="launch-blockers" style={{ marginBottom: 12 }}>
             <Banner tone="warn">
