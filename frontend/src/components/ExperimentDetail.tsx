@@ -5,6 +5,7 @@ import { buildRaterPreviewUrl } from '../raterPreview';
 import StatusLabel from './StatusLabel';
 import type {
   StudyFlag,
+  Dataset,
   DatasetMetaField,
   DuplicateNavState,
   Experiment,
@@ -20,7 +21,6 @@ import type {
 } from '../types';
 import { ExperimentExclusionPicker } from './experiment-detail/ExclusionPicker';
 import { SaveToDatasetCard } from './experiment-detail/SaveToDatasetCard';
-import { OneClickLaunch } from './experiment-detail/OneClickLaunch';
 import { testingPreviewFix } from './experiment-detail/launchBlockers';
 import { PilotCheckCard, StatePill, describeSummary } from './experiment-detail/PilotCheckCard';
 import { usePilotCheckGate } from './experiment-detail/usePilotCheckGate';
@@ -45,6 +45,7 @@ import {
   StatCell,
   Toast,
   ToggleSwitch,
+  fieldLabel,
   inputStyle,
   primaryButton,
   secondaryButton,
@@ -93,7 +94,7 @@ function metaLabel(key: string): string {
 
 const DATASET_META_HINTS: Record<DatasetMetaField, string> = {
   description:
-    'Shown to raters on the intro screen and inherited as the default by each round on Launch on Prolific. Edit a round in Launch to override for that round only. Supports markdown.',
+    'The rater instructions: shown to raters on the intro screen and behind the Instructions button, in every round. Not the Prolific listing, which is set per round on Launch on Prolific. Supports markdown.',
   system_prompt:
     'Used to generate AI answers and assistance. Plain text; line breaks preserved.',
   human_prompt_prefix: 'Rendered above every question. Plain text with line breaks preserved, or Markdown when "Render questions as Markdown" is on.',
@@ -423,6 +424,7 @@ function ExperimentDetail({
     excluded_experiment_ids: [],
   });
   const otherExperiments = allExperiments.filter((e) => e.id !== experiment.id);
+  const datasetId = experiment.group_dataset_id;
   // Reward is kept as a raw input string (not a number) so the user can type
   // "9.99" without each keystroke round-tripping through parse-then-format
   // and snapping the value back to "9.00". Converted to minor units only at
@@ -439,6 +441,16 @@ function ExperimentDetail({
   const [pricing, setPricing] = useState<ProlificPricing | null>(null);
   // Null until platform status loads; no wave notice is shown before then.
   const [currentWave, setCurrentWave] = useState<string | null>(null);
+  // The dataset's other experiments, in any wave and any status, so arms
+  // piloted one after another keep each other's raters out.
+  const siblingKey =
+    datasetId === null
+      ? ''
+      : otherExperiments
+          .filter((e) => e.group_dataset_id === datasetId)
+          .map((e) => e.id)
+          .sort((a, b) => a - b)
+          .join(',');
   const [pilotForm, setPilotForm] = useState<Omit<PilotStudyCreate, 'reward'>>({
     description: experiment.description ?? '',
     estimated_completion_time: 60,
@@ -448,6 +460,12 @@ function ExperimentDetail({
     screeners: DEFAULT_SCREENERS,
     excluded_experiment_ids: [],
   });
+  useEffect(() => {
+    setPilotForm((prev) => ({
+      ...prev,
+      excluded_experiment_ids: siblingKey ? siblingKey.split(',').map(Number) : [],
+    }));
+  }, [siblingKey]);
   // Keep the pilot description in sync with the experiment's dataset-level
   // description while the admin hasn't typed their own version. Set true on
   // any admin edit to the pilot description field; unset on a successful pilot
@@ -458,17 +476,49 @@ function ExperimentDetail({
     if (pilotDescriptionDirtyRef.current) return;
     setPilotForm((prev) => ({ ...prev, description: experiment.description ?? '' }));
   }, [experiment.description]);
-  const [pilotRewardInput, setPilotRewardInput] = useState<string>('9.00');
-  // Re-format the pilot default once when the workspace currency arrives,
-  // so a JPY workspace sees "900" (≈¥900) instead of "9.00" (≈¥9). Guarded
-  // by a ref so we never clobber what the researcher has typed.
-  const pilotRewardInitedRef = useRef(false);
+  // The dataset card: the pilot form starts from whatever it declares. A
+  // failed read leaves the form on its defaults.
+  const [pilotCard, setPilotCard] = useState<Dataset | null>(null);
   useEffect(() => {
-    if (currencyCode !== null && !pilotRewardInitedRef.current) {
-      pilotRewardInitedRef.current = true;
-      setPilotRewardInput(rewardMinorToInput(900, currencyCode));
+    if (datasetId === null) return;
+    let cancelled = false;
+    api.getDataset(datasetId).then(
+      (card) => {
+        if (cancelled) return;
+        setPilotCard(card);
+        // The Prolific listing gets the card's blurb, not the rater guide.
+        if (card.study_blurb) pilotDescriptionDirtyRef.current = true;
+        setPilotForm((prev) => ({
+          ...prev,
+          ...(card.study_blurb ? { description: card.study_blurb } : {}),
+          ...(card.estimated_completion_time
+            ? { estimated_completion_time: card.estimated_completion_time }
+            : {}),
+          ...(card.study_label ? { study_label: card.study_label } : {}),
+          // An empty list is a choice (no screeners); only unset keeps the defaults.
+          ...(Array.isArray(card.screeners) ? { screeners: card.screeners } : {}),
+        }));
+      },
+      () => {},
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [datasetId]);
+  const [pilotRewardInput, setPilotRewardInput] = useState<string>('9.00');
+  // Format the pilot reward (the card's, else the default) once the workspace
+  // currency arrives, so a JPY workspace sees "900" (≈¥900) instead of "9.00"
+  // (≈¥9). Guarded by a ref so we never clobber what the researcher has typed.
+  const pilotRewardDirtyRef = useRef(false);
+  useEffect(() => {
+    if (currencyCode !== null && !pilotRewardDirtyRef.current) {
+      setPilotRewardInput(rewardMinorToInput(pilotCard?.reward ?? 900, currencyCode));
     }
-  }, [currencyCode]);
+  }, [currencyCode, pilotCard]);
+  const handlePilotRewardChange = (value: string) => {
+    pilotRewardDirtyRef.current = true;
+    setPilotRewardInput(value);
+  };
 
   const [humanAsATool, setHumanAsATool] = useState(
     experiment.assistance_method === 'human_as_a_tool'
@@ -943,7 +993,7 @@ function ExperimentDetail({
   };
 
   // Study creation goes through the pilot check gate (docs/pilot-check.md):
-  // its 409 becomes a dialog, and "Launch anyway" repeats the call acknowledged.
+  // its 409 becomes a dialog, and "Create draft anyway" repeats the call acknowledged.
   const pilotCheckGate = usePilotCheckGate();
 
   const handleRunPilot = async (e: React.FormEvent) => {
@@ -956,7 +1006,7 @@ function ExperimentDetail({
           reward: rewardInputToMinor(pilotRewardInput, currencyCode),
           ...(acknowledgePilotCheck ? { acknowledge_pilot_check: true } : {}),
         });
-        showSuccess('Pilot draft created on Prolific. Publish it when ready.', 4000);
+        showSuccess('Pilot draft created on Prolific. It is not live until you publish it.', 4000);
         pilotDescriptionDirtyRef.current = false;
         onRefresh();
         await loadRounds();
@@ -967,15 +1017,6 @@ function ExperimentDetail({
     }
   };
 
-  // A failed rounds reload throws, so the one-click panel can say the draft
-  // exists rather than offer a second launch.
-  const handleLaunchedFromCard = async () => {
-    showSuccess('Pilot draft created from the dataset card. Publish it when ready.', 4000);
-    onRefresh();
-    await reloadRounds();
-    await loadRecommendation();
-  };
-
   const handleRunRound = async () => {
     if (!recommendation) return;
     const places = recommendation.recommended_places;
@@ -983,7 +1024,10 @@ function ExperimentDetail({
     try {
       await pilotCheckGate.attempt(async (acknowledgePilotCheck) => {
         await api.runExperimentRound(experiment.id, places, { acknowledgePilotCheck });
-        showSuccess(`Round ${nextRoundNumber} draft created on Prolific. Publish it when ready.`, 4000);
+        showSuccess(
+          `Round ${nextRoundNumber} draft created on Prolific. It is not live until you publish it.`,
+          4000,
+        );
         await loadRounds();
         await loadRecommendation();
       });
@@ -1478,14 +1522,13 @@ function ExperimentDetail({
             pilotForm={pilotForm}
             onPilotChange={setPilotForm}
             pilotRewardInput={pilotRewardInput}
-            onPilotRewardChange={setPilotRewardInput}
+            onPilotRewardChange={handlePilotRewardChange}
+            pilotCard={pilotCard}
             onRunPilot={handleRunPilot}
-            onLaunchedFromCard={handleLaunchedFromCard}
             onRunRound={handleRunRound}
             otherExperiments={otherExperiments}
             onBack={() => setTab('assistance')}
             onPilotCheckChanged={onRefresh}
-            attemptLaunch={pilotCheckGate.attempt}
           />
         )}
       </div>
@@ -2789,14 +2832,14 @@ function LaunchPanel(props: {
   onPilotChange: (form: Omit<PilotStudyCreate, 'reward'>) => void;
   pilotRewardInput: string;
   onPilotRewardChange: (v: string) => void;
+  // The dataset card the pilot form was filled from; null when there is none.
+  pilotCard: Dataset | null;
   onRunPilot: (e: React.FormEvent) => void;
-  onLaunchedFromCard: () => Promise<void>;
   onRunRound: () => void;
   otherExperiments: Experiment[];
   onBack: () => void;
   // Refreshes the experiment (and so `experiment.pilot_check`) when a run lands.
   onPilotCheckChanged: () => void;
-  attemptLaunch: (launch: (acknowledgePilotCheck: boolean) => Promise<void>) => Promise<boolean>;
 }) {
   const {
     experiment,
@@ -2829,13 +2872,12 @@ function LaunchPanel(props: {
     onPilotChange,
     pilotRewardInput,
     onPilotRewardChange,
+    pilotCard,
     onRunPilot,
-    onLaunchedFromCard,
     onRunRound,
     otherExperiments,
     onBack,
     onPilotCheckChanged,
-    attemptLaunch,
   } = props;
 
   // Past the pilot the launch gate no longer shows, but a testing preview
@@ -2874,7 +2916,8 @@ function LaunchPanel(props: {
             Launch on Prolific
           </h2>
           <p style={{ margin: '4px 0 0', fontSize: 14, color: 'var(--muted)' }}>
-            Run the pilot, check the results, then launch full rounds.
+            Each round starts as a draft on Prolific and goes live when you publish it. Run the
+            pilot, check the results, then run full rounds.
           </p>
         </div>
         {/* Preview link is always available regardless of Prolific mode. */}
@@ -2971,6 +3014,7 @@ function LaunchPanel(props: {
                       onClose={() => onCloseRound(round.id, round.round_number)}
                       onDiscard={() => onDiscardRound(round.id, round.round_number)}
                       otherExperiments={otherExperiments}
+                      datasetId={experiment.group_dataset_id}
                     />
                   ))}
                 </div>
@@ -2992,7 +3036,7 @@ function LaunchPanel(props: {
               )}
 
               {/* After a pilot, offer its time and reward to the dataset card so
-                  the dataset's next study can skip the pilot form. */}
+                  the dataset's next pilot form starts from them. */}
               {recommendation &&
                 recommendation.avg_time_per_question_seconds > 0 &&
                 experiment.group_dataset_id !== null &&
@@ -3007,22 +3051,11 @@ function LaunchPanel(props: {
                   />
                 )}
 
-              {rounds.length === 0 && experiment.group_dataset_id !== null && (
-                <OneClickLaunch
-                  experimentId={experiment.id}
-                  datasetId={experiment.group_dataset_id}
-                  datasetName={experiment.group_dataset_name ?? 'dataset'}
-                  launchBlockers={experiment.launch_blockers ?? []}
-                  launchBlockerSummary={experiment.launch_blocker_summary}
-                  currencyCode={currencyCode}
-                  currencySymbol={currencySymbol}
-                  onLaunched={onLaunchedFromCard}
-                  attemptLaunch={attemptLaunch}
-                />
-              )}
-
               {rounds.length === 0 && (
                 <PilotForm
+                  datasetId={experiment.group_dataset_id}
+                  datasetName={experiment.group_dataset_name ?? 'dataset'}
+                  card={pilotCard}
                   studyFlags={experiment.study_flags}
                   sessionDurationMinutes={experiment.session_duration_minutes}
                   pilotForm={pilotForm}
@@ -3196,6 +3229,7 @@ function RoundCard(props: {
   onClose: () => void;
   onDiscard: () => void;
   otherExperiments: Experiment[];
+  datasetId: number | null;
   studyFlags: StudyFlag[];
 }) {
   const {
@@ -3301,7 +3335,7 @@ function RoundCard(props: {
                 ...(publishBlocked ? { opacity: 0.5, cursor: 'not-allowed' } : {}),
               }}
             >
-              {publishing ? 'Publishing…' : 'Publish'}
+              {publishing ? 'Publishing…' : 'Publish to participants'}
             </button>
           </>
         )}
@@ -3325,9 +3359,9 @@ function RoundCard(props: {
           style={{ padding: 20 }}
         >
           <Field
-            label="Study description"
+            label="Prolific listing description"
             id={`edit-round-description-${round.round_number}`}
-            hint="Sent to Prolific and shown on the rater intro for anyone entering via this round's link. Overrides the dataset description for this round only."
+            hint="What participants read on Prolific before they open this round's study. Raters see the instructions from Instructions & prompts once inside, not this text."
           >
             <textarea
               data-testid={`edit-round-description-${round.round_number}`}
@@ -3466,6 +3500,7 @@ function RoundCard(props: {
               selectedIds={editForm.excluded_experiment_ids}
               onChange={(ids) => onEditFormChange({ ...editForm, excluded_experiment_ids: ids })}
               testIdPrefix={`edit-round-exclusion-${round.round_number}`}
+              datasetId={props.datasetId}
             />
           </Field>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
@@ -3590,6 +3625,11 @@ function PilotForm(props: {
   pricing: ProlificPricing | null;
   onSubmit: (e: React.FormEvent) => void;
   otherExperiments: Experiment[];
+  // The experiment's dataset and its card, which the form was filled from;
+  // null for an ungrouped experiment, or until the card has loaded.
+  datasetId: number | null;
+  datasetName: string;
+  card: Dataset | null;
   studyFlags: StudyFlag[];
   datasetDescription: string | null;
   sessionDurationMinutes: number;
@@ -3617,27 +3657,59 @@ function PilotForm(props: {
   } = props;
   const prefilledFromDataset =
     !!datasetDescription && pilotForm.description === datasetDescription;
+  const { card, datasetName } = props;
+  const prefilledFromCard = !!card?.study_blurb && pilotForm.description === card.study_blurb;
+  // What the form would have taken from the card, had the card declared it.
+  const cardGaps = card
+    ? (['study_blurb', 'estimated_completion_time', 'reward'] as const).filter(
+        (field) => !card[field],
+      )
+    : [];
   return (
     <SectionCard header="Pilot round">
       <p style={{ fontSize: 13.5, color: 'var(--muted)', margin: '0 0 16px' }}>
-        Create the first unpublished round with the study configuration you want to reuse. Pilot
-        timing data drives the recommended size for later rounds.
+        This creates a draft study on Prolific with the configuration later rounds reuse. No
+        participant sees it until you publish the draft. Pilot timing data drives the recommended
+        size for later rounds.
       </p>
+      {card && (
+        <p
+          data-testid="pilot-card-prefill"
+          style={{ fontSize: 13.5, color: 'var(--accent-soft-ink)', margin: '0 0 16px' }}
+        >
+          Filled in from the {datasetName} card, and set to exclude participants of the dataset's
+          other experiments. Edit anything before creating the draft.
+          {cardGaps.length > 0 &&
+            ` The card has no ${cardGaps.map(fieldLabel).join(' or ')} yet, so check those.`}
+        </p>
+      )}
       <form onSubmit={onSubmit}>
         <Field
           id="pilot-description"
-          label="Study description"
+          label="Prolific listing description"
           hint={
             <>
-              Sent to Prolific as this pilot's public description and shown on the rater intro.
-              Overrides the dataset description for this pilot only. Markdown is converted to
-              Prolific's HTML subset (headings, bold/italic/strike, lists, paragraphs). Links and
-              images are not supported by Prolific.
-              {prefilledFromDataset && (
-                <div style={{ color: 'var(--accent-soft-ink)', marginTop: 6 }}>
-                  Prefilled from the dataset description on Instructions &amp; prompts. Edit to
-                  override for this pilot.
+              What participants read on Prolific before they open the study. Raters see the
+              instructions from Instructions &amp; prompts once inside, not this text. Markdown is
+              converted to Prolific's HTML subset (headings, bold/italic/strike, lists,
+              paragraphs). Links and images are not supported by Prolific.
+              {prefilledFromCard ? (
+                <div
+                  data-testid="pilot-description-source"
+                  style={{ color: 'var(--accent-soft-ink)', marginTop: 6 }}
+                >
+                  Filled in from the {datasetName} card's Prolific listing description.
                 </div>
+              ) : (
+                prefilledFromDataset && (
+                  <div
+                    data-testid="pilot-description-source"
+                    style={{ color: 'var(--accent-soft-ink)', marginTop: 6 }}
+                  >
+                    Starts as a copy of the rater instructions on Instructions &amp; prompts.
+                    Rewrite it as a short listing for Prolific.
+                  </div>
+                )
               )}
             </>
           }
@@ -3695,6 +3767,7 @@ function PilotForm(props: {
             selectedIds={pilotForm.excluded_experiment_ids}
             onChange={(ids) => onPilotChange({ ...pilotForm, excluded_experiment_ids: ids })}
             testIdPrefix="pilot-exclusion"
+            datasetId={props.datasetId}
           />
         </Field>
         <Field id="pilot-estimated-completion-time" label="Estimated completion time (minutes)">
@@ -3809,7 +3882,7 @@ function PilotForm(props: {
         {launchBlockers.length > 0 && (
           <div data-testid="launch-blockers" style={{ marginBottom: 12 }}>
             <Banner tone="warn">
-              This study can't launch yet: {launchBlockerSummary}.
+              The pilot draft can't be created yet: {launchBlockerSummary}.
               {launchBlockerFixes.map((fix) => (
                 <div key={fix} style={{ marginTop: 6 }}>
                   {fix}

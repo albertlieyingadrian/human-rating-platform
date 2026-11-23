@@ -52,7 +52,6 @@ from .queries import (
     fetch_rated_question_ids,
     fetch_rater_completed_count,
     fetch_rater_or_404,
-    fetch_round_description,
 )
 from .selectors import build_question_selection_groups, build_selected_question
 from .validators import (
@@ -85,15 +84,8 @@ async def start_session(
     db: AsyncSession,
 ) -> RaterStartResponse:
     experiment = await fetch_experiment_or_404(experiment_id, db)
-    round_description = await fetch_round_description(
-        experiment_id=experiment_id,
-        prolific_study_id=study_id,
-        is_preview=is_preview,
-        db=db,
-    )
-    # Round-level description (set per Prolific study) takes precedence so admins
-    # can tailor each round; otherwise fall back to the dataset-level description.
-    description_for_intro = round_description or experiment.description
+    # A round's description is the Prolific listing; raters read the experiment's.
+    description_for_intro = experiment.description
 
     assistance_instructions = get_rater_instructions(experiment.assistance_method) or None
     # Read before anything is written: the terms source is read live, and if

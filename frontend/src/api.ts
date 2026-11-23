@@ -25,7 +25,6 @@ import type {
   Tag,
   ExperimentStats,
   ExperimentStatus,
-  LaunchPreview,
   PilotCheckRefusal,
   PilotCheckRun,
   PilotStudyCreate,
@@ -104,9 +103,7 @@ const routes = {
     apiKeys: '/admin/api-keys',
     apiKeyRegenerate: (id: number) => `/admin/api-keys/${id}/regenerate`,
     apiKeyRevoke: (id: number) => `/admin/api-keys/${id}/revoke`,
-    launch: (id: number) => `/admin/experiments/${id}/launch`,
     pilotCheck: (id: number) => `/admin/experiments/${id}/pilot-check`,
-    launchPreview: (id: number) => `/admin/experiments/${id}/launch/preview`,
     prolificPilot: (id: number) => `/admin/experiments/${id}/prolific/pilot`,
     prolificRecommend: (id: number) => `/admin/experiments/${id}/prolific/recommend`,
     prolificRounds: (id: number) => `/admin/experiments/${id}/prolific/rounds`,
@@ -758,24 +755,6 @@ export const api = {
     });
   },
 
-  // One-click: builds the pilot draft from the dataset card instead of the
-  // form. Only a complete card (economics included) qualifies, so a dataset's
-  // first study usually goes through the pilot form. Publishing is still separate.
-  // It excludes the dataset's other experiments; getLaunchPreview lists them.
-  async launchFromCard(
-    experimentId: number,
-    places?: number,
-    { acknowledgePilotCheck = false }: { acknowledgePilotCheck?: boolean } = {}
-  ): Promise<ExperimentRound> {
-    return requestJson<ExperimentRound>(routes.admin.launch(experimentId), {
-      method: 'POST',
-      json: {
-        ...(places != null ? { places } : {}),
-        ...(acknowledgePilotCheck ? { acknowledge_pilot_check: true } : {}),
-      },
-    });
-  },
-
   // ── Pilot check (docs/pilot-check.md) ─────────────────────────────────
 
   // Starts a run; it finishes in the background. Poll getPilotCheck.
@@ -786,10 +765,6 @@ export const api = {
   // The experiment's latest run, or null when none has been started.
   async getPilotCheck(experimentId: number): Promise<PilotCheckRun | null> {
     return requestJson<PilotCheckRun | null>(routes.admin.pilotCheck(experimentId));
-  },
-
-  async getLaunchPreview(experimentId: number): Promise<LaunchPreview> {
-    return requestJson<LaunchPreview>(routes.admin.launchPreview(experimentId));
   },
 
   async getRecommendation(

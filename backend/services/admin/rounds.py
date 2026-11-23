@@ -715,7 +715,6 @@ async def run_pilot_study(
     payload: PilotStudyCreate,
     db: AsyncSession,
     *,
-    preapproved_exclusion_ids: list[int] | None = None,
     requested_by: str | None = None,
 ) -> ExperimentRoundResponse:
     settings = get_settings()
@@ -741,20 +740,20 @@ async def run_pilot_study(
 
     excluded_experiment_ids = list(payload.excluded_experiment_ids)
     # Pilot creation is the first write for this experiment's exclusion list —
-    # every listed target is "new", so all must be FINISHED, bar any the
-    # server chose itself (`preapproved_exclusion_ids`, from one-click launch).
-    # Grandfathering only kicks in on subsequent edits when IDs were already
-    # present.
+    # every listed target is "new", so all must be FINISHED or on this
+    # experiment's dataset. Grandfathering only kicks in on subsequent edits
+    # when IDs were already present.
     await validate_new_exclusion_targets(
+        experiment,
         excluded_experiment_ids,
-        previously_allowed_ids=preapproved_exclusion_ids or [],
+        previously_allowed_ids=[],
         db=db,
     )
 
     try:
         # Inside the try: building the blocklist lazily creates participant
         # groups on Prolific (this experiment's own, and any excluded sibling's
-        # that has none yet, which one-click launch makes common), so a failure
+        # that has none yet, which the card prefill makes common), so a failure
         # there is a Prolific failure too, reported the same way.
         blocklist_group_ids = await _build_round_blocklist_group_ids(
             experiment, excluded_experiment_ids, db
@@ -1258,12 +1257,13 @@ async def update_experiment_round(
             if payload.excluded_experiment_ids is not None
             else previously_allowed_ids
         )
-        # New targets on this write must be FINISHED. IDs already present on
-        # this round are grandfathered: they were legal when set and the target
-        # experiment's later state change shouldn't retroactively invalidate
-        # them.
+        # New targets on this write must be FINISHED or on this experiment's
+        # dataset. IDs already present on this round are grandfathered: they
+        # were legal when set and the target experiment's later state change
+        # shouldn't retroactively invalidate them.
         if payload.excluded_experiment_ids is not None:
             await validate_new_exclusion_targets(
+                experiment,
                 excluded_ids,
                 previously_allowed_ids=previously_allowed_ids,
                 db=db,

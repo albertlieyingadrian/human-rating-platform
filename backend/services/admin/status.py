@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models import (
     ROUND_TERMINAL_STATUSES,
     Experiment,
+    ExperimentGroup,
     ExperimentRound,
     ExperimentStatus,
     ProlificStudyStatus,
@@ -313,13 +314,40 @@ async def assert_can_finish(experiment: Experiment, db: AsyncSession) -> None:
         )
 
 
+async def _same_dataset_experiment_ids(experiment: Experiment, db: AsyncSession) -> set[int]:
+    """Every other experiment on `experiment`'s dataset, through any of the
+    dataset's groups and so any wave. Empty for an ungrouped experiment."""
+    if experiment.group_id is None:
+        return set()
+    dataset_id = (
+        select(ExperimentGroup.dataset_id)
+        .where(ExperimentGroup.id == experiment.group_id)
+        .scalar_subquery()
+    )
+    rows = await db.execute(
+        select(Experiment.id)
+        .join(ExperimentGroup, Experiment.group_id == ExperimentGroup.id)
+        .where(ExperimentGroup.dataset_id == dataset_id, Experiment.id != experiment.id)
+    )
+    return set(rows.scalars())
+
+
 async def validate_new_exclusion_targets(
+    experiment: Experiment,
     new_ids: list[int],
     *,
     previously_allowed_ids: list[int],
     db: AsyncSession,
 ) -> None:
-    """Ensure any newly-added exclusion target is a FINISHED experiment.
+    """Ensure any newly-added exclusion target is a FINISHED experiment, or
+    one on `experiment`'s own dataset.
+
+    A same-dataset experiment is allowed in any status, whether or not it has
+    run a study yet: a sibling arm still collecting is exactly the one to
+    block. Prolific participant groups are dynamic, so its (possibly empty)
+    group goes on the blocklist and its raters join as they arrive. An arm
+    created after this write isn't on the list; only its own pilot excludes
+    this experiment.
 
     IDs that were already present in `previously_allowed_ids` are grandfathered
     — they were legal when set, and we don't want a status change on the target
@@ -327,6 +355,9 @@ async def validate_new_exclusion_targets(
     (present in `new_ids` but not in `previously_allowed_ids`) are checked.
     """
     added = set(new_ids) - set(previously_allowed_ids)
+    if not added:
+        return
+    added -= await _same_dataset_experiment_ids(experiment, db)
     if not added:
         return
 
@@ -346,7 +377,7 @@ async def validate_new_exclusion_targets(
         raise HTTPException(
             status_code=400,
             detail=(
-                "Exclusion targets must be finished experiments. "
+                "Exclusion targets must be finished experiments or on the same dataset. "
                 f"Rejected: {', '.join(sorted(invalid))}."
             ),
         )

@@ -2715,6 +2715,30 @@ def test_editing_a_round_description_keeps_the_time_limit_note(client: TestClien
 
 
 @respx.mock
+def test_the_rater_intro_shows_the_instructions_not_the_round_listing(
+    client: TestClient, enable_prolific
+):
+    experiment, pilot = _create_prolific_experiment(client)
+    instructions = client.get(f"/api/admin/experiments/{experiment['id']}").json()["description"]
+    assert pilot["description"] == "Test study"
+    assert instructions and instructions != pilot["description"]
+
+    response = client.post(
+        "/api/raters/start",
+        params={
+            "experiment_id": experiment["id"],
+            "PROLIFIC_PID": "PID_INTRO",
+            "STUDY_ID": "preview",
+            "SESSION_ID": "preview",
+            "preview": "true",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["experiment_description_markdown"] == instructions
+
+
+@respx.mock
 def test_prolific_round_edit_updates_study_label_and_screeners(
     client: TestClient,
     enable_prolific,

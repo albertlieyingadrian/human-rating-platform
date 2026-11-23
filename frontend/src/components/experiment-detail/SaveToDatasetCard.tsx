@@ -12,8 +12,8 @@ import { SectionCard, fieldLabel, secondaryButton } from './ui';
  * The values are the pilot round's own, which every later round on this
  * experiment reuses; the recommendation itself sizes places only. Both units
  * already match the card's: minutes, and the per-participant reward in the
- * workspace currency's minor units (what PilotStudyCreate.reward and one-click
- * launch take), so nothing is converted.
+ * workspace currency's minor units (what PilotStudyCreate.reward takes), so
+ * nothing is converted.
  */
 export function SaveToDatasetCard({
   datasetId,
@@ -102,7 +102,7 @@ export function SaveToDatasetCard({
             style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.55, marginBottom: 10 }}
           >
             {card.complete
-              ? 'Card complete: one-click pilots can use it.'
+              ? 'Card complete: the pilot form fills in from it.'
               : `Card incomplete: missing ${card.missing_for_complete.map(fieldLabel).join(', ')}.`}
           </div>
         )}

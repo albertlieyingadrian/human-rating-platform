@@ -230,7 +230,7 @@ spends its time.
 
 `assert_launch_ready` stays as it is: hard blockers remain hard.
 `gate.gate_for` runs after it in `run_pilot_study` and
-`run_experiment_round` (`launch_from_card` goes through `run_pilot_study`):
+`run_experiment_round`:
 
 - `gate_mode == "off"`: returns.
 - Latest run `passed` and not stale: returns.

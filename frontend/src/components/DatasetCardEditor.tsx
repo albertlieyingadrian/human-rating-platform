@@ -226,7 +226,7 @@ export default function DatasetCardEditor({
         </h2>
         <p style={{ margin: '0 0 16px', fontSize: 13.5, color: 'var(--muted)', lineHeight: 1.55 }}>
           How studies on this dataset run. A new experiment in one of its groups takes the names and
-          ratings target unless its create form sets them; one-click pilots use the rest.
+          ratings target unless its create form sets them; the pilot form starts from the rest.
         </p>
         {error && (
           <div role="alert" style={{ fontSize: 13, color: 'var(--danger)', marginBottom: 12 }}>
@@ -249,7 +249,7 @@ export default function DatasetCardEditor({
             >
               <div data-testid="card-complete">
                 {card.complete
-                  ? 'Card complete: one-click pilots can use it.'
+                  ? 'Card complete: the pilot form fills in from it.'
                   : `Card incomplete: missing ${card.missing_for_complete.map(fieldLabel).join(', ')}.`}
               </div>
             </div>
@@ -267,7 +267,7 @@ export default function DatasetCardEditor({
             >
               {text('internal_study_name', 'card-internal-name-input')}
             </Field>
-            <Field id="card-blurb" label="Study description" hint="Sent to Prolific by one-click pilots.">
+            <Field id="card-blurb" label="Prolific listing description" hint="What participants read on Prolific before they open the study; fills in the pilot form. Rater instructions are separate: they come with the upload, on Instructions & prompts.">
               <textarea
                 id="card-blurb"
                 data-testid="card-blurb-input"

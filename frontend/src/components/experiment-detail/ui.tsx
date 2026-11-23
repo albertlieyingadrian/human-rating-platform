@@ -458,6 +458,7 @@ export const dangerButton: React.CSSProperties = {
 
 /** A dataset card field name as UI copy: `estimated_completion_time` → `estimated completion time`. */
 export function fieldLabel(field: string): string {
+  if (field === 'study_blurb') return 'Prolific listing description';
   return field.replace(/_/g, ' ');
 }
 
