@@ -6,7 +6,6 @@ import StatusLabel from './StatusLabel';
 import type {
   StudyFlag,
   Dataset,
-  DatasetMetaField,
   DuplicateNavState,
   Experiment,
   ExperimentRound,
@@ -27,7 +26,14 @@ import { PilotCheckCard, StatePill, describeSummary } from './experiment-detail/
 import { usePilotCheckGate } from './experiment-detail/usePilotCheckGate';
 import { GroupControl, MoveToWaveButton } from './experiment-detail/GroupControl';
 import { HeaderMenu } from './experiment-detail/HeaderMenu';
-import { EthicsPanel } from './experiment-detail/EthicsPanel';
+import {
+  SettingsPanel,
+  settingsDirty,
+  settingsFormFrom,
+  settingsPayload,
+  type SettingsForm,
+} from './experiment-detail/SettingsPanel';
+import ConfirmDialog from './ConfirmDialog';
 import {
   StepperTabs,
   type StepDef,
@@ -73,7 +79,7 @@ function formatSessionLength(minutes: number): string {
 }
 
 // Labels for every key an upload can declare. The first five are the editable
-// fields in the Instructions & prompts panel, in the order the CSV `#META:`
+// fields in the Instructions & settings panel, in the order the CSV `#META:`
 // JSON uses; the per-method `assistance_models.<method>` keys have no editable
 // field — they are reported in upload results only, because the upload pins
 // them into assistance_params.
@@ -93,60 +99,6 @@ const DATASET_META_LABELS: Record<UploadMetaKey, string> = {
 function metaLabel(key: string): string {
   return DATASET_META_LABELS[key as UploadMetaKey] ?? key;
 }
-
-const DATASET_META_HINTS: Record<DatasetMetaField, string> = {
-  description:
-    'The rater instructions: shown to raters on the intro screen and behind the Instructions button, in every round. Not the Prolific listing, which is set per round on Launch on Prolific. Supports markdown.',
-  system_prompt:
-    'Used to generate AI answers and assistance. Plain text; line breaks preserved.',
-  human_prompt_prefix: 'Rendered above every question. Plain text with line breaks preserved, or Markdown when "Render questions as Markdown" is on.',
-  human_prompt_suffix: 'Rendered below every question. Plain text with line breaks preserved, or Markdown when "Render questions as Markdown" is on.',
-  prolific_pool:
-    'For your reference when configuring Prolific filters; not sent to the Prolific API.',
-};
-
-// Placeholder text shown inside empty fields — matches the mock's design of
-// letting the field's example serve as its own hint before the user types.
-const DATASET_META_PLACEHOLDERS: Partial<Record<DatasetMetaField, string>> = {
-  human_prompt_prefix: 'e.g. When you see the text below, do you think x or y?',
-  human_prompt_suffix: 'e.g. Is the statement above true or false?',
-  prolific_pool: 'e.g. uk_representative_sample',
-};
-
-// Fields grouped by *where they surface* — a researcher editing the tab is
-// usually thinking "how do I change what raters see on the splash?" or "the
-// prompt around each question", not "the ordering the CSV uses". Group names
-// answer that question; single-field groups (system prompt, pool) still get a
-// header so someone with assistance off knows they can skip the AI row.
-const META_FIELD_GROUPS: {
-  header: string;
-  fields: { field: DatasetMetaField; kind: 'input' | 'textarea'; minHeight?: number }[];
-  card?: 'rendering';
-}[] = [
-  {
-    header: 'Instructions',
-    fields: [
-      { field: 'description', kind: 'textarea', minHeight: 140 },
-      { field: 'system_prompt', kind: 'textarea', minHeight: 140 },
-    ],
-  },
-  {
-    header: 'Per-question framing',
-    fields: [
-      { field: 'human_prompt_prefix', kind: 'textarea', minHeight: 90 },
-      { field: 'human_prompt_suffix', kind: 'textarea', minHeight: 90 },
-    ],
-  },
-  {
-    header: 'Question rendering',
-    fields: [],
-    card: 'rendering',
-  },
-  {
-    header: 'Deployment',
-    fields: [{ field: 'prolific_pool', kind: 'input' }],
-  },
-];
 
 interface ExperimentDetailProps {
   experiment: Experiment;
@@ -305,7 +257,7 @@ function NameEditor({
 // and Danger sit outside this sequence.
 const SETUP_STEPS: { key: TabKey; label: string }[] = [
   { key: 'questions', label: 'Questions' },
-  { key: 'instructions', label: 'Instructions & prompts' },
+  { key: 'instructions', label: 'Instructions & settings' },
   { key: 'assistance', label: 'Rater assistance' },
   { key: 'launch', label: 'Launch on Prolific' },
 ];
@@ -560,39 +512,16 @@ function ExperimentDetail({
     setAssistanceTouched(true);
   };
 
-  // Dataset metadata edits live in local form state and are committed via Save.
-  const [metaForm, setMetaForm] = useState<Record<DatasetMetaField, string>>({
-    description: experiment.description ?? '',
-    system_prompt: experiment.system_prompt ?? '',
-    human_prompt_prefix: experiment.human_prompt_prefix ?? '',
-    human_prompt_suffix: experiment.human_prompt_suffix ?? '',
-    prolific_pool: experiment.prolific_pool ?? '',
-  });
-  const [isMarkdown, setIsMarkdown] = useState(experiment.is_markdown);
-  const [renderMath, setRenderMath] = useState(experiment.render_math);
+  // The Instructions & settings step edits one form, committed by its Save.
+  // It lives here so leaving the step can ask about unsaved changes, and so
+  // the Rater assistance step can edit the system prompt too.
+  const [settingsEdits, setSettingsEdits] = useState<Partial<SettingsForm>>({});
+  const settings: SettingsForm = { ...settingsFormFrom(experiment), ...settingsEdits };
   const [savingMeta, setSavingMeta] = useState(false);
-  const metaFormDirtyRef = useRef(false);
-
-  useEffect(() => {
-    if (metaFormDirtyRef.current) return;
-    setMetaForm({
-      description: experiment.description ?? '',
-      system_prompt: experiment.system_prompt ?? '',
-      human_prompt_prefix: experiment.human_prompt_prefix ?? '',
-      human_prompt_suffix: experiment.human_prompt_suffix ?? '',
-      prolific_pool: experiment.prolific_pool ?? '',
-    });
-    setIsMarkdown(experiment.is_markdown);
-    setRenderMath(experiment.render_math);
-  }, [
-    experiment.description,
-    experiment.system_prompt,
-    experiment.human_prompt_prefix,
-    experiment.human_prompt_suffix,
-    experiment.prolific_pool,
-    experiment.is_markdown,
-    experiment.render_math,
-  ]);
+  const [pendingTab, setPendingTab] = useState<TabKey | null>(null);
+  const changeSettings = (patch: Partial<SettingsForm>) =>
+    setSettingsEdits((current) => ({ ...current, ...patch }));
+  const settingsUnsaved = settingsDirty(settings, experiment);
 
   // ── Data-loading effects ───────────────────────────────────────────────
   const loadStats = useCallback(async () => {
@@ -690,19 +619,13 @@ function ExperimentDetail({
       await api.updateExperiment(experiment.id, {
         assistance_method: experiment.assistance_method,
         assistance_params: experiment.assistance_params ?? null,
-        description: metaForm.description,
-        system_prompt: metaForm.system_prompt,
-        human_prompt_prefix: metaForm.human_prompt_prefix,
-        human_prompt_suffix: metaForm.human_prompt_suffix,
-        is_markdown: isMarkdown,
-        render_math: renderMath,
-        prolific_pool: metaForm.prolific_pool,
+        ...settingsPayload(settings),
       });
-      showSuccess('Instructions & prompts saved.', 2000);
-      metaFormDirtyRef.current = false;
-      onRefresh();
+      await onRefresh();
+      setSettingsEdits({});
+      showSuccess('Settings saved.', 2000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save instructions & prompts');
+      setError(err instanceof Error ? err.message : 'Failed to save settings');
     } finally {
       setSavingMeta(false);
     }
@@ -1057,6 +980,21 @@ function ExperimentDetail({
     ? 'Locked — experiment is finished.'
     : 'Locked — config freezes once the first round is published on Prolific.';
 
+  // Every way off the settings step (the step tabs, Back, Continue) comes
+  // through here, so unsaved edits are never dropped without a question.
+  const leaveSettings = (next: TabKey) => {
+    if (tab === 'instructions' && next !== tab && settingsUnsaved && !isLocked) {
+      setPendingTab(next);
+    } else {
+      setTab(next);
+    }
+  };
+  const discardSettingsAndLeave = () => {
+    setSettingsEdits({});
+    if (pendingTab) setTab(pendingTab);
+    setPendingTab(null);
+  };
+
   // Setup checklist state. Each step's "done"-ness is derived; the "current"
   // step is the first non-done step in sequence. Everything after `current`
   // is "todo".
@@ -1368,9 +1306,20 @@ function ExperimentDetail({
 
       <StepperTabs
         active={tab}
-        onChange={setTab}
+        onChange={leaveSettings}
         steps={stepDefs}
       />
+
+      {pendingTab && (
+        <ConfirmDialog
+          title="Leave without saving?"
+          message="This step has unsaved changes. If you continue, they are discarded."
+          confirmLabel="Continue without saving"
+          cancelLabel="Keep editing"
+          onConfirm={discardSettingsAndLeave}
+          onCancel={() => setPendingTab(null)}
+        />
+      )}
 
       {/* Toasts float over the layout so they don't shove panel content down
           when they appear/disappear. Anchored top-center so they land in the
@@ -1438,31 +1387,26 @@ function ExperimentDetail({
           />
         )}
         {tab === 'instructions' && (
-          <MetadataPanel
+          <SettingsPanel
             experiment={experiment}
             uploads={uploads}
-            metaForm={metaForm}
-            onMetaChange={(field, value) => {
-              metaFormDirtyRef.current = true;
-              setMetaForm({ ...metaForm, [field]: value });
-            }}
-            isMarkdown={isMarkdown}
-            onIsMarkdownChange={(value) => {
-              metaFormDirtyRef.current = true;
-              setIsMarkdown(value);
-            }}
-            renderMath={renderMath}
-            onRenderMathChange={(value) => {
-              metaFormDirtyRef.current = true;
-              setRenderMath(value);
-            }}
+            form={settings}
+            onChange={changeSettings}
+            dirty={settingsUnsaved}
+            saving={savingMeta}
             onSave={handleSaveMeta}
-            savingMeta={savingMeta}
             isLocked={isLocked}
             lockedHint={lockedHint}
-            onRefresh={onRefresh}
-            onBack={() => setTab('questions')}
-            onNext={() => setTab('assistance')}
+            footer={
+              <StepNav
+                stepIndex={2}
+                totalSteps={4}
+                onBack={() => leaveSettings('questions')}
+                backLabel="← Questions"
+                onNext={() => leaveSettings('assistance')}
+                nextLabel="Continue: Rater assistance →"
+              />
+            }
           />
         )}
         {tab === 'assistance' && (
@@ -1473,11 +1417,8 @@ function ExperimentDetail({
             topNValue={topNValue}
             confidenceMethod={confidenceMethod}
             resolvedModels={experiment.resolved_models}
-            systemPrompt={metaForm.system_prompt}
-            onSystemPromptChange={(v) => {
-              metaFormDirtyRef.current = true;
-              setMetaForm({ ...metaForm, system_prompt: v });
-            }}
+            systemPrompt={settings.system_prompt}
+            onSystemPromptChange={(v) => changeSettings({ system_prompt: v })}
             onSaveSystemPrompt={handleSaveMeta}
             onPickNone={handleNoAssistance}
             onToggleTopN={handleTopNToggle}
@@ -2215,290 +2156,7 @@ function QuestionsPanel({
         onBack={onBack}
         backLabel="← Overview"
         onNext={onNext}
-        nextLabel="Continue: Instructions & prompts →"
-      />
-    </div>
-  );
-}
-
-// ── Instructions & prompts panel ─────────────────────────────────────────
-
-function MetadataPanel({
-  experiment,
-  uploads,
-  metaForm,
-  onMetaChange,
-  isMarkdown,
-  onIsMarkdownChange,
-  renderMath,
-  onRenderMathChange,
-  onSave,
-  savingMeta,
-  isLocked,
-  lockedHint,
-  onRefresh,
-  onBack,
-  onNext,
-}: {
-  experiment: Experiment;
-  uploads: Upload[];
-  metaForm: Record<DatasetMetaField, string>;
-  onMetaChange: (field: DatasetMetaField, value: string) => void;
-  isMarkdown: boolean;
-  onIsMarkdownChange: (value: boolean) => void;
-  renderMath: boolean;
-  onRenderMathChange: (value: boolean) => void;
-  onSave: () => void;
-  savingMeta: boolean;
-  isLocked: boolean;
-  lockedHint: string;
-  onRefresh: () => void;
-  onBack: () => void;
-  onNext: () => void;
-}) {
-  const renderFieldCard = (
-    field: DatasetMetaField,
-    kind: 'input' | 'textarea',
-    options: { minHeight?: number; trailing?: React.ReactNode } = {},
-  ) => {
-    const current = (experiment[field] ?? '') as string;
-    const conflicts = uploads.filter((u) => {
-      const declared = u.dataset_meta?.[field];
-      return declared !== undefined && declared !== current;
-    });
-    return (
-      <section
-        key={field}
-        style={{
-          background: 'var(--surface)',
-          border: '1px solid var(--faint)',
-          borderRadius: 'var(--radius)',
-          boxShadow: 'var(--shadow)',
-          padding: '22px 24px',
-        }}
-      >
-        <Field
-          id={`meta-${field}`}
-          label={DATASET_META_LABELS[field]}
-          disabled={isLocked}
-          hint={
-            <>
-              {DATASET_META_HINTS[field]}
-              {conflicts.length > 0 && (
-                <div style={{ color: 'var(--warn)', marginTop: 6 }}>
-                  Declared differently by: {conflicts.map((c) => c.filename).join(', ')}.
-                </div>
-              )}
-            </>
-          }
-        >
-          {kind === 'textarea' ? (
-            <textarea
-              id={`meta-${field}`}
-              value={metaForm[field]}
-              placeholder={DATASET_META_PLACEHOLDERS[field]}
-              disabled={isLocked}
-              onChange={(e) => onMetaChange(field, e.target.value)}
-              style={{
-                ...textareaStyle,
-                minHeight: options.minHeight,
-                cursor: isLocked ? 'not-allowed' : 'text',
-                opacity: isLocked ? 0.7 : 1,
-              }}
-            />
-          ) : (
-            <input
-              id={`meta-${field}`}
-              type="text"
-              value={metaForm[field]}
-              placeholder={DATASET_META_PLACEHOLDERS[field]}
-              disabled={isLocked}
-              onChange={(e) => onMetaChange(field, e.target.value)}
-              style={{
-                ...inputStyle,
-                fontFamily: 'var(--font-mono)',
-                cursor: isLocked ? 'not-allowed' : 'text',
-                opacity: isLocked ? 0.7 : 1,
-              }}
-            />
-          )}
-        </Field>
-        {options.trailing}
-      </section>
-    );
-  };
-
-  const renderToggle = (
-    id: string,
-    checked: boolean,
-    onChange: (value: boolean) => void,
-    label: string,
-    hint: string,
-    conflicts: Upload[],
-  ) => {
-    return (
-      <div>
-        <label
-          htmlFor={id}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'flex-start',
-            gap: 10,
-            fontSize: 13.5,
-            lineHeight: 1.4,
-            fontWeight: 600,
-            cursor: isLocked ? 'not-allowed' : 'pointer',
-          }}
-        >
-          <input
-            id={id}
-            type="checkbox"
-            checked={checked}
-            disabled={isLocked}
-            aria-describedby={`${id}-hint`}
-            onChange={(e) => onChange(e.target.checked)}
-            style={{ flex: '0 0 auto', marginTop: '0.5px', cursor: 'inherit' }}
-          />
-          {label}
-        </label>
-        <div
-          id={`${id}-hint`}
-          style={{
-            fontSize: 12.5,
-            color: 'var(--muted)',
-            lineHeight: 1.55,
-            margin: '2px 0 0 26px',
-          }}
-        >
-          {hint}
-          {conflicts.length > 0 && (
-            <div style={{ color: 'var(--warn)', marginTop: 6 }}>
-              Declared differently by: {conflicts.map((c) => c.filename).join(', ')}.
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  const renderMarkdownConflicts = uploads.filter((u) => {
-    const declared = u.dataset_meta?.render_markdown;
-    return declared !== undefined && declared !== experiment.is_markdown;
-  });
-  const renderMathConflicts = uploads.filter((u) => {
-    const declared = u.dataset_meta?.render_math;
-    return declared !== undefined && declared !== experiment.render_math;
-  });
-
-  const renderingCard = (
-    <section
-      style={{
-        background: 'var(--surface)',
-        border: '1px solid var(--faint)',
-        borderRadius: 'var(--radius)',
-        boxShadow: 'var(--shadow)',
-        padding: '18px 24px',
-        opacity: isLocked ? 0.7 : 1,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 14,
-      }}
-    >
-      {renderToggle(
-        'meta-is_markdown',
-        isMarkdown,
-        onIsMarkdownChange,
-        'Render questions as Markdown',
-        'Code blocks, tables, etc. will be rendered as styled elements, in the question prefix and suffix too',
-        renderMarkdownConflicts,
-      )}
-      {renderToggle(
-        'meta-render_math',
-        renderMath,
-        onRenderMathChange,
-        'Render math',
-        'TeX between $…$, $$…$$, \\(…\\) or \\[…\\] in the question, its options, its context and the document is typeset. Leave off when questions use $ for money.',
-        renderMathConflicts,
-      )}
-    </section>
-  );
-
-  const saveButton = (
-    <button
-      type="button"
-      onClick={onSave}
-      disabled={savingMeta || isLocked}
-      style={{
-        ...primaryButton,
-        marginLeft: 'auto',
-        opacity: savingMeta || isLocked ? 0.6 : 1,
-        cursor: savingMeta || isLocked ? 'not-allowed' : 'pointer',
-      }}
-    >
-      {savingMeta ? 'Saving…' : 'Save instructions & prompts'}
-    </button>
-  );
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-      <Banner tone="info">
-        Auto-populated from the first upload that declares dataset metadata. Edits here
-        always win — later uploads that disagree are noted but never overwrite.
-      </Banner>
-      {isLocked && <Banner tone="warn">{lockedHint}</Banner>}
-
-      {META_FIELD_GROUPS.map((group, groupIdx) => {
-        const isLastGroup = groupIdx === META_FIELD_GROUPS.length - 1;
-        return (
-          <div key={group.header} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div
-              style={{
-                font: '600 11px/1 var(--font-mono)',
-                letterSpacing: '0.16em',
-                textTransform: 'uppercase',
-                color: 'var(--muted)',
-                marginTop: groupIdx === 0 ? 0 : 6,
-              }}
-            >
-              {group.header}
-            </div>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: group.fields.length > 1 ? '1fr 1fr' : '1fr',
-                gap: 18,
-              }}
-              className="xd-grid-collapse"
-            >
-              {group.fields.map(({ field, kind, minHeight }) =>
-                renderFieldCard(field, kind, {
-                  minHeight,
-                  trailing:
-                    isLastGroup && field === group.fields[group.fields.length - 1].field
-                      ? <div style={{ display: 'flex', marginTop: -8 }}>{saveButton}</div>
-                      : undefined,
-                }),
-              )}
-              {group.card === 'rendering' && renderingCard}
-            </div>
-          </div>
-        );
-      })}
-
-      <EthicsPanel
-        experiment={experiment}
-        isLocked={isLocked}
-        lockedHint={lockedHint}
-        onSaved={onRefresh}
-      />
-
-      <StepNav
-        stepIndex={2}
-        totalSteps={4}
-        onBack={onBack}
-        backLabel="← Questions"
-        onNext={onNext}
-        nextLabel="Continue: Rater assistance →"
+        nextLabel="Continue: Instructions & settings →"
       />
     </div>
   );
@@ -2718,7 +2376,7 @@ function AssistanceModePanel({
         stepIndex={3}
         totalSteps={4}
         onBack={onBack}
-        backLabel="← Instructions & prompts"
+        backLabel="← Instructions & settings"
         onNext={onNext}
         nextLabel="Continue to launch →"
         highlightNext
@@ -3355,7 +3013,7 @@ function RoundCard(props: {
           <Field
             label="Prolific listing description"
             id={`edit-round-description-${round.round_number}`}
-            hint="What participants read on Prolific before they open this round's study. Raters see the instructions from Instructions & prompts once inside, not this text."
+            hint="What participants read on Prolific before they open this round's study. Raters see the instructions from Instructions & settings once inside, not this text."
           >
             <textarea
               data-testid={`edit-round-description-${round.round_number}`}
@@ -3746,7 +3404,7 @@ function PilotForm(props: {
               hint={
                 <>
                   What participants read on Prolific before they open the study. Raters see the
-                  instructions from Instructions &amp; prompts once inside, not this text. Markdown is
+                  instructions from Instructions &amp; settings once inside, not this text. Markdown is
                   converted to Prolific's HTML subset (headings, bold/italic/strike, lists,
                   paragraphs). Links and images are not supported by Prolific.
                   {prefilledFromCard ? (
@@ -3762,7 +3420,7 @@ function PilotForm(props: {
                         data-testid="pilot-description-source"
                         style={{ color: 'var(--accent-soft-ink)', marginTop: 6 }}
                       >
-                        Starts as a copy of the rater instructions on Instructions &amp; prompts.
+                        Starts as a copy of the rater instructions on Instructions &amp; settings.
                         Rewrite it as a short listing for Prolific.
                       </div>
                     )

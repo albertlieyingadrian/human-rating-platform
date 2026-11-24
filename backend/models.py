@@ -183,6 +183,14 @@ class Experiment(SQLModel, table=True):
         default=False,
         sa_column=Column(Boolean, nullable=False, server_default=text("false")),
     )
+    block_copy_paste: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default=text("false")),
+    )
+    forbid_outside_tools: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default=text("false")),
+    )
     prolific_pool: Optional[str] = Field(
         default=None,
         sa_column=Column(String(255), nullable=True),

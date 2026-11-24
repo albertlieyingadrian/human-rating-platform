@@ -378,7 +378,9 @@ export function ToggleSwitch({
         role="switch"
         aria-checked={checked}
         aria-labelledby={ariaLabelledBy}
-        tabIndex={0}
+        aria-disabled={disabled}
+        className="toggle-switch"
+        tabIndex={disabled ? -1 : 0}
         onClick={() => {
           if (!disabled) onChange();
         }}
@@ -397,7 +399,6 @@ export function ToggleSwitch({
           background: checked ? 'var(--accent)' : 'var(--surface-2)',
           cursor: disabled ? 'not-allowed' : 'pointer',
           transition: 'background 0.2s',
-          outline: 'none',
         }}
       />
       <div

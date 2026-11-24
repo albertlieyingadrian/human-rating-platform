@@ -16,6 +16,8 @@ type ExperimentRecord = {
   archived_at: string | null;
   is_markdown: boolean;
   render_math: boolean;
+  block_copy_paste: boolean;
+  forbid_outside_tools: boolean;
   assistance_method: string;
   resolved_models?: Record<
     string,
@@ -206,6 +208,8 @@ type RaterSessionRecord = {
   debrief_markdown?: string | null;
   human_prompt_prefix?: string | null;
   human_prompt_suffix?: string | null;
+  block_copy_paste?: boolean;
+  forbid_outside_tools?: boolean;
 };
 
 // The create form lives in a side panel opened from the page header.
@@ -337,6 +341,8 @@ function buildExperiment(state: MockState, partial: Partial<ExperimentRecord> = 
     archived_at: null,
     is_markdown: false,
     render_math: false,
+    block_copy_paste: false,
+    forbid_outside_tools: false,
     assistance_method: 'none',
     needs_attention: false,
     attention_reason: null,
@@ -835,7 +841,19 @@ async function installApiMocks(
       const body = payload as Record<string, unknown>;
       state.experimentPatches.push(body);
       // Mirrors the backend: only fields present in the body change.
-      for (const key of ['study_flags', 'content_warning_details'] as const) {
+      for (const key of [
+        'study_flags',
+        'content_warning_details',
+        'description',
+        'system_prompt',
+        'human_prompt_prefix',
+        'human_prompt_suffix',
+        'prolific_pool',
+        'is_markdown',
+        'render_math',
+        'block_copy_paste',
+        'forbid_outside_tools',
+      ] as const) {
         if (body[key] !== undefined) {
           (experiment as Record<string, unknown>)[key] = body[key];
         }
@@ -1327,6 +1345,75 @@ test('the rater intro states the session length before they commit', async ({ pa
   await expect(expectations).toContainText('you have 1 hour 50 minutes in total.');
   await expect(expectations).toContainText('If the time runs out');
   await expect(expectations).toContainText('an extra 5 minutes to finish and submit it.');
+});
+
+// Whether a copy / cut / paste / drop on the text goes through (true) or is
+// cancelled by the page (false).
+const clipboardAllowed = (page: Page, text: string) =>
+  page.getByText(text).evaluate((el) =>
+    ['copy', 'cut', 'paste', 'drop'].map((type) =>
+      el.dispatchEvent(new Event(type, { bubbles: true, cancelable: true })),
+    ),
+  );
+
+test('a rater may use AI tools and copy the question unless the experiment restricts them', async ({ page }) => {
+  const state = createMockState();
+  seedRaterWithQuestion(state, {
+    id: 703,
+    question_text: 'Is this question open to copying?',
+    options: 'Yes|No',
+    question_type: 'MC',
+    is_markdown: false,
+  });
+  state.sessionsByExperimentId[1].experiment_description_markdown = 'Rate each item.';
+
+  await installApiMocks(page, state);
+  await page.goto(RATER_URL);
+  await agreeToConsent(page);
+  await expect(page.getByTestId('outside-tools-policy')).toContainText('use them however you like');
+  await page.getByRole('button', { name: 'Continue' }).click();
+
+  await expect(page.getByText('Is this question open to copying?')).toBeVisible();
+  await expect(page.locator('.rater-no-copy')).toHaveCount(0);
+  expect(await clipboardAllowed(page, 'Is this question open to copying?')).toEqual([true, true, true, true]);
+});
+
+test('a restricted experiment forbids AI tools on the intro and blocks copy and paste while rating', async ({ page, context }) => {
+  const state = createMockState();
+  seedRaterWithQuestion(state, {
+    id: 704,
+    question_text: 'Is this question closed to copying?',
+    options: 'Yes|No',
+    question_type: 'MC',
+    is_markdown: false,
+    parent_question_text: `RESTRICTED DOCUMENT ${'padding '.repeat(400)}`,
+  });
+  // No description: the ban alone is enough to show the intro screen.
+  state.sessionsByExperimentId[1].block_copy_paste = true;
+  state.sessionsByExperimentId[1].forbid_outside_tools = true;
+
+  await installApiMocks(page, state);
+  await page.goto(RATER_URL);
+  await agreeToConsent(page);
+  const policy = page.getByTestId('outside-tools-policy');
+  await expect(policy).toContainText('Internet and AI tools: strictly forbidden. Do not use web search');
+  await expect(policy).not.toContainText('built into this study');
+  await expect(page.getByTestId('session-expectations')).not.toContainText('however you like');
+  await page.getByRole('button', { name: 'Continue' }).click();
+
+  const question = page.getByText('Is this question closed to copying?');
+  await expect(question).toBeVisible();
+  expect(await question.evaluate((el) => getComputedStyle(el).userSelect)).toBe('none');
+  expect(await clipboardAllowed(page, 'Is this question closed to copying?')).toEqual([false, false, false, false]);
+
+  const popupPromise = context.waitForEvent('page');
+  await page.getByRole('link', { name: 'Open document in new tab' }).click();
+  const popup = await popupPromise;
+  expect((await clipboardAllowed(popup, 'RESTRICTED DOCUMENT'))[0]).toBe(false);
+
+  // The ban stays readable from the rating screen.
+  await page.getByTestId('instructions-button').click();
+  await expect(page.getByRole('dialog').getByTestId('outside-tools-policy')).toContainText('strictly forbidden');
 });
 
 test('the rating screen reopens the intro instructions in a scrollable dialog', async ({ page }) => {
@@ -3930,7 +4017,7 @@ test('an experiment missing launch fields cannot start a pilot', async ({ page }
   // Served by the API (status.py), one per blocker; the page renders them as given.
   const fixes = [
     'Questions: upload questions on the Questions tab.',
-    'Rater instructions: set them under Instructions & prompts.',
+    'Rater instructions: set them under Instructions & settings.',
     'Internal study name: set it with the pencil by its title.',
     'Assistance model: PATCH assistance_params.assistance_models.<method>.',
   ];
@@ -4630,6 +4717,120 @@ test('a sensitive study shows the warning in its consent and ends normally', asy
   await expect(page.getByTestId('debrief-screen')).toHaveCount(0);
 });
 
+function seedSettingsExperiment(state: MockState, overrides: Partial<ExperimentRecord> = {}) {
+  state.experiments = [
+    buildExperiment(state, { id: 1, name: 'Settings Experiment', question_count: 2, ...overrides }),
+  ];
+  state.nextExperimentId = 2;
+  state.uploads[1] = [];
+  state.rounds[1] = [];
+  state.recommendations[1] = {
+    avg_time_per_question_seconds: 0,
+    remaining_rating_actions: 0,
+    total_hours_remaining: 0,
+    recommended_places: 0,
+    is_complete: false,
+  };
+}
+
+test('one Save on the settings step covers text, switches and consent together', async ({ page }) => {
+  const state = createMockState();
+  seedSettingsExperiment(state);
+  await installApiMocks(page, state);
+  await page.goto('/admin/experiments/1');
+  await page.getByTestId('tab-instructions').click();
+
+  await expect(page.getByTestId('settings-status')).toHaveText('All changes saved');
+  await expect(page.getByRole('button', { name: /^Save/ })).toHaveCount(1);
+
+  // The rule quotes the sentence raters will read, and it follows the switch.
+  const quoted = page.getByTestId('outside-tools-preview');
+  await expect(quoted).toContainText('use them however you like');
+  await page.getByTestId('meta-forbid_outside_tools').click();
+  await expect(quoted).toContainText('strictly forbidden. Do not use web search');
+  await expect(quoted).not.toContainText('built into this study');
+  await page.getByTestId('meta-block_copy_paste').click();
+  await page.locator('#meta-description').fill('Rate each passage.');
+  await page.getByTestId('ethics-flag-deception').check();
+
+  // Each section's heading sums up what it holds.
+  await expect(page.getByTestId('settings-summary-rules')).toHaveText(
+    'Internet and AI tools forbidden · Copy and paste blocked',
+  );
+  await expect(page.getByTestId('settings-summary-intro')).toHaveText('3 words');
+  await expect(page.getByTestId('settings-summary-consent')).toContainText('Deception');
+  await expect(page.getByTestId('settings-status')).toHaveText('Unsaved changes');
+
+  await page.getByTestId('settings-save').click();
+  await expect(page.getByTestId('settings-status')).toHaveText('All changes saved');
+  expect(state.experimentPatches).toHaveLength(1);
+  expect(state.experimentPatches[0]).toMatchObject({
+    description: 'Rate each passage.',
+    forbid_outside_tools: true,
+    block_copy_paste: true,
+    is_markdown: false,
+    study_flags: ['deception'],
+  });
+});
+
+test('leaving the settings step with unsaved changes asks first', async ({ page }) => {
+  const state = createMockState();
+  seedSettingsExperiment(state);
+  await installApiMocks(page, state);
+  await page.goto('/admin/experiments/1');
+  await page.getByTestId('tab-instructions').click();
+
+  // Nothing changed: Continue goes straight on.
+  await page.getByRole('button', { name: 'Continue: Rater assistance →' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByTestId('tab-instructions').click();
+
+  await page.locator('#meta-description').fill('Unsaved text');
+  await page.getByRole('button', { name: 'Continue: Rater assistance →' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Leave without saving?' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Keep editing' })).toBeFocused();
+
+  // Keep editing: still on the step, the edit intact.
+  await dialog.getByRole('button', { name: 'Keep editing' }).click();
+  await expect(page.locator('#meta-description')).toHaveValue('Unsaved text');
+
+  // The step tabs are guarded the same way; confirming discards the edit.
+  await page.getByTestId('tab-questions').click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Continue without saving' }).click();
+  await expect(page.locator('#meta-description')).toHaveCount(0);
+  expect(state.experimentPatches).toHaveLength(0);
+  await page.getByTestId('tab-instructions').click();
+  await expect(page.locator('#meta-description')).toHaveValue('');
+  await expect(page.getByTestId('settings-status')).toHaveText('All changes saved');
+});
+
+test('the settings step collapses sections and fits a phone', async ({ page }) => {
+  const state = createMockState();
+  seedSettingsExperiment(state, { assistance_method: 'top_n' });
+  await installApiMocks(page, state);
+  await page.goto('/admin/experiments/1');
+  await page.getByTestId('tab-instructions').click();
+
+  // An assisted study's ban exempts the assistance it provides.
+  await page.getByTestId('meta-forbid_outside_tools').click();
+  await expect(page.getByTestId('outside-tools-preview')).toContainText('built into this study');
+
+  const framing = page.getByTestId('settings-section-framing');
+  await framing.getByRole('button', { name: /Question framing/ }).click();
+  await expect(page.locator('#meta-human_prompt_prefix')).toBeHidden();
+  await framing.getByRole('button', { name: /Question framing/ }).click();
+  await expect(page.locator('#meta-human_prompt_prefix')).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 800 });
+  // Nothing overflows sideways and the prefix and suffix stack.
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  const prefix = await page.locator('#meta-human_prompt_prefix').boundingBox();
+  const suffix = await page.locator('#meta-human_prompt_suffix').boundingBox();
+  expect(suffix!.y).toBeGreaterThan(prefix!.y + prefix!.height);
+  await expect(page.getByTestId('settings-save')).toBeInViewport();
+});
+
 test('the consent section saves the flags and details, and previews the statements', async ({
   page,
 }) => {
@@ -4658,7 +4859,8 @@ test('the consent section saves the flags and details, and previews the statemen
   // Sensitive switches to the warned consent and requires details before saving.
   await page.getByTestId('ethics-flag-sensitive').check();
   await expect(page.getByTestId('ethics-documents')).toContainText('warned consent v1');
-  await expect(page.getByTestId('ethics-save')).toBeDisabled();
+  await expect(page.getByTestId('settings-save')).toBeDisabled();
+  await expect(page.getByTestId('settings-status')).toContainText('Content warning details are required');
   await page.getByTestId('ethics-details').fill('Some passages describe violence.');
   // Deception adds the debrief on top.
   await page.getByTestId('ethics-flag-deception').check();
@@ -4671,9 +4873,9 @@ test('the consent section saves the flags and details, and previews the statemen
   await expect(unsaved).toContainText('Some passages describe violence.');
   await unsaved.getByRole('button', { name: 'Close' }).click();
   expect(state.experimentPatches).toHaveLength(0);
-  await page.getByTestId('ethics-save').click();
+  await page.getByTestId('settings-save').click();
 
-  await expect(page.getByText('Consent settings saved.')).toBeVisible();
+  await expect(page.getByText('Settings saved.')).toBeVisible();
   expect(state.experimentPatches).toHaveLength(1);
   expect(state.experimentPatches[0]).toMatchObject({
     study_flags: ['sensitive', 'deception'],
@@ -4696,8 +4898,8 @@ test('the consent section saves the flags and details, and previews the statemen
   await expect(cleared).toContainText('standard v1');
   await expect(cleared).not.toContainText('Some passages describe violence.');
   await cleared.getByRole('button', { name: 'Close' }).click();
-  await page.getByTestId('ethics-save').click();
-  await expect(page.getByText('Consent settings saved.')).toBeVisible();
+  await page.getByTestId('settings-save').click();
+  await expect.poll(() => state.experimentPatches.length).toBe(2);
   expect(state.experimentPatches[1]).toMatchObject({ study_flags: [], content_warning_details: '' });
 });
 

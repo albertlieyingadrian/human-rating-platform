@@ -267,7 +267,7 @@ export default function DatasetCardEditor({
             >
               {text('internal_study_name', 'card-internal-name-input')}
             </Field>
-            <Field id="card-blurb" label="Prolific listing description" hint="What participants read on Prolific before they open the study; fills in the pilot form. Rater instructions are separate: they come with the upload, on Instructions & prompts.">
+            <Field id="card-blurb" label="Prolific listing description" hint="What participants read on Prolific before they open the study; fills in the pilot form. Rater instructions are separate: they come with the upload, on Instructions & settings.">
               <textarea
                 id="card-blurb"
                 data-testid="card-blurb-input"
